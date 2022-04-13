@@ -37,24 +37,26 @@
 
 enum Jpeg2000Markers {
     JPEG2000_SOC = 0xff4f, // start of codestream
+    JPEG2000_CAP = 0xff50, // Fixed information marker segments
     JPEG2000_SIZ = 0xff51, // image and tile size
-    JPEG2000_COD,          // coding style default
-    JPEG2000_COC,          // coding style component
+    JPEG2000_COD = 0xff52, // coding style default
+    JPEG2000_COC = 0xff53, // coding style component
     JPEG2000_TLM = 0xff55, // tile-part length, main header
     JPEG2000_PLM = 0xff57, // packet length, main header
-    JPEG2000_PLT,          // packet length, tile-part header
+    JPEG2000_PLT = 0xff58, // packet length, tile-part header
+    JPEG2000_CPF = 0xff59, // reversible transcoding of HT2K files to other code streams
     JPEG2000_QCD = 0xff5c, // quantization default
-    JPEG2000_QCC,          // quantization component
-    JPEG2000_RGN,          // region of interest
-    JPEG2000_POC,          // progression order change
-    JPEG2000_PPM,          // packed packet headers, main header
-    JPEG2000_PPT,          // packed packet headers, tile-part header
+    JPEG2000_QCC = 0xff5d, // quantization component
+    JPEG2000_RGN = 0xff5e, // region of interest
+    JPEG2000_POC = 0xff5f, // progression order change
+    JPEG2000_PPM = 0xff60, // packed packet headers, main header
+    JPEG2000_PPT = 0xff61, // packed packet headers, tile-part header
     JPEG2000_CRG = 0xff63, // component registration
-    JPEG2000_COM,          // comment
+    JPEG2000_COM = 0xff64, // comment
     JPEG2000_SOT = 0xff90, // start of tile-part
-    JPEG2000_SOP,          // start of packet
-    JPEG2000_EPH,          // end of packet header
-    JPEG2000_SOD,          // start of data
+    JPEG2000_SOP = 0xff91, // start of packet
+    JPEG2000_EPH = 0xff92, // end of packet header
+    JPEG2000_SOD = 0xff93, // start of data
     JPEG2000_EOC = 0xffd9, // end of codestream
 };
 
@@ -110,7 +112,8 @@ enum Jpeg2000Quantsty { // quantization style
 #define JPEG2000_CSTY_PREC      0x01 // Precincts defined in coding style
 #define JPEG2000_CSTY_SOP       0x02 // SOP marker present
 #define JPEG2000_CSTY_EPH       0x04 // EPH marker present
-
+#define JPEG2000_CTSY_HTJ2K_F   0x40 // Full High throughput JPEG2000 (Only part 15 code blocks.)
+#define JPEG2000_CTSY_HTJ2K_M   0xC0 // Mixed Part 1 and Part 15(HTJ2k) code blocks
 // Progression orders
 #define JPEG2000_PGOD_LRCP      0x00  // Layer-resolution level-component-position progression
 #define JPEG2000_PGOD_RLCP      0x01  // Resolution level-layer-component-position progression

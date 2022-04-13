@@ -479,6 +479,24 @@ static int get_siz(Jpeg2000DecoderContext *s)
     return 0;
 }
 
+static int get_cap(Jpeg2000DecoderContext *s, int len)
+{
+    av_log(s->avctx, AV_LOG_ERROR, "Parsing of CAP segment not implemented\n");
+    av_log(s->avctx,AV_LOG_ERROR,"Skipping %d bytes of the CAP segment\n" ,len-2);
+    bytestream2_skip(&(s->g), len-2);
+
+    return 0;
+}
+/* Get and decode information that facilitates reversible transcoding of HTJ2k code streams
+ * to and from code streams conforming to Rec. ITU-T T.800  */
+static int get_cpf(Jpeg2000DecoderContext *s, int len)
+{
+    av_log(s->avctx,AV_LOG_ERROR,"Parsing of CPF segment not implemented\n");
+    av_log(s->avctx,AV_LOG_ERROR,"Skipping %d bytes of the CPF segment\n", len-2);
+    bytestream2_skip(&(s->g),len-2);
+    return 0;
+}
+
 /* get common part for COD and COC segments */
 static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
 {
@@ -520,7 +538,22 @@ static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     c->cblk_style = bytestream2_get_byteu(&s->g);
+
     if (c->cblk_style != 0) { // cblk style
+        if (c->cblk_style & JPEG2000_CTSY_HTJ2K_M) {
+            /* Mixed High throughput  JPEG 2000
+             * The image uses both part 1 and part 15(HT) of the spec.
+             */
+            av_log(s->avctx, AV_LOG_FATAL, "Support for Mixed High throughput JPEG 2000 is not yet available\n");
+            return AVERROR_PATCHWELCOME;
+        } else if (c->cblk_style & JPEG2000_CTSY_HTJ2K_F) {
+            /* Full High throughput JPEG 2000 image
+             * The image only uses part 15 of the spec.
+             */
+            av_log(s->avctx, AV_LOG_FATAL, "Support for Full High throughput JPEG 2000 is not yet available\n");
+            return AVERROR_PATCHWELCOME;
+        }
+
         av_log(s->avctx, AV_LOG_WARNING, "extra cblk styles %X\n", c->cblk_style);
         if (c->cblk_style & JPEG2000_CBLK_BYPASS)
             av_log(s->avctx, AV_LOG_WARNING, "Selective arithmetic coding bypass\n");
@@ -2191,6 +2224,7 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             break;
 
         len = bytestream2_get_be16(&s->g);
+
         if (len < 2 || bytestream2_get_bytes_left(&s->g) < len - 2) {
             if (s->avctx->strict_std_compliance >= FF_COMPLIANCE_STRICT) {
                 av_log(s->avctx, AV_LOG_ERROR, "Invalid len %d left=%d\n", len, bytestream2_get_bytes_left(&s->g));
@@ -2278,6 +2312,14 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
 
             ret = get_ppt(s, len);
             break;
+
+        case JPEG2000_CAP:
+            ret = get_cap(s,len);
+            break;
+        case JPEG2000_CPF:
+            ret = get_cpf(s,len);
+                break;
+
         default:
             av_log(s->avctx, AV_LOG_ERROR,
                    "unsupported marker 0x%.4"PRIX16" at pos 0x%X\n",
