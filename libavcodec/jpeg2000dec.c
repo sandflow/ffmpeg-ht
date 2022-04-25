@@ -523,15 +523,7 @@ static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     c->cblk_style = bytestream2_get_byteu(&s->g);
-    if (c->cblk_style != 0) { // cblk style
-        if (c->cblk_style & JPEG2000_CTSY_HTJ2K_M || c->cblk_style & JPEG2000_CTSY_HTJ2K_F) {
-            /*
-             * HT code-blocks (Rec. ITU-T T.814 | ISO/IEC 15444-15) bit-stream
-             * Not yet supported in ffmpeg, cannot continue.
-             */
-            av_log(s->avctx, AV_LOG_FATAL, "Support for High throughput JPEG 2000 is not yet available\n");
-            return AVERROR_PATCHWELCOME;
-        }
+    if (c->cblk_style != 0 && !(c->cblk_style & JPEG2000_CTSY_HTJ2K_M || c->cblk_style & JPEG2000_CTSY_HTJ2K_F)) { // cblk style
 
         av_log(s->avctx, AV_LOG_WARNING, "extra cblk styles %X\n", c->cblk_style);
         if (c->cblk_style & JPEG2000_CBLK_BYPASS)
