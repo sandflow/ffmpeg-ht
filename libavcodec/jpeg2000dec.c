@@ -2203,7 +2203,7 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
                 /* Confirm Marker constraints according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
                 // A.2
-                if ((s->avctx->profile & (1<<14))){
+                if (!(s->avctx->profile & (1<<14))){
                     av_log(s->avctx, AV_LOG_ERROR, "Bit 14 of Rsiz is not equal to 1\n");
                     return AVERROR_INVALIDDATA;
                 }
