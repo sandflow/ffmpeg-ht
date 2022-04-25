@@ -68,7 +68,29 @@ enum Jpeg2000Quantsty { // quantization style
     JPEG2000_QSTY_SI,   // scalar derived
     JPEG2000_QSTY_SE    // scalar expounded
 };
+enum Jpeg2000HtCodeBlocks{
+    HTJ2K_HTONLY,       // All code blocks are HT code-blocks
+    HTJ2K_HTDECLARED,   // Mixed HT and Part 1 code blocks for a particular tile
+    HTJ2K_MIXED         // Mixed HT and Part 1 code blocks but not found in tiles
+};
+enum Jpeg2000NumCodeBlocks{
 
+    HTJ2K_SINGLEHT , // Zero or one HT set is present for any code block
+    HTJ2K_MULTIHT,   // More than one HT sets can be present
+};
+enum Jpeg2000Rgn{
+    HTJ2K_RGN,      // No region of interest marker present
+    HTJ2K_RGNFREE,  // Region of interest marker can be present
+};
+enum Jpeg2000CodeStream{
+    HTJ2K_HOMOGENOUS,   // Homogenous code stream
+    HTJ2K_HETEROGENOUS, // Heterogeneous code stream
+};
+
+enum Jpeg2000Reversible{
+    HTJ2K_HTIRV,  // High throughput irreversible code stream
+    HTJ2K_HTREV,  // High throughput reversible code stream.
+};
 #define JPEG2000_MAX_DECLEVELS 33
 #define JPEG2000_MAX_RESLEVELS (JPEG2000_MAX_DECLEVELS + 1)
 
@@ -229,6 +251,13 @@ typedef struct Jpeg2000Component {
     uint8_t roi_shift; // ROI scaling value for the component
 } Jpeg2000Component;
 
+typedef struct Jpeg2000HTJ2KCodeStream{
+    enum Jpeg2000HtCodeBlocks   code_block;
+    enum Jpeg2000NumCodeBlocks  num_code_blocks;
+    enum Jpeg2000Rgn            rgn;
+    enum Jpeg2000CodeStream     code_stream;
+    enum Jpeg2000Reversible     reversible_transforms;
+}Jpeg2000HTJ2KCodeStream;
 /* misc tools */
 static inline int ff_jpeg2000_ceildivpow2(int a, int b)
 {

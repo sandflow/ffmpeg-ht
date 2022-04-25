@@ -2167,6 +2167,85 @@ static void jpeg2000_dec_cleanup(Jpeg2000DecoderContext *s)
     s->ncomponents = 0;
 }
 
+static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2KCodeStream *stream)
+{
+    uint16_t bits;
+
+    bits = s->ccap[15] >> 14;
+
+    switch (bits) {
+        case 0b00:
+            stream->code_block = HTJ2K_HTONLY;
+            break;
+        case 0b10:
+            stream->code_block = HTJ2K_MIXED;
+            break;
+        case 0b11:
+            stream->code_block = HTJ2K_HTDECLARED;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Bits 14 and 15 of Ccap 15 are %d which cannot be currently decoded.\n",bits);
+            return AVERROR_PATCHWELCOME;
+    }
+
+    bits = (s->ccap[15]>>13) & 1;
+
+    switch (bits) {
+        case 0b0:
+            stream->num_code_blocks = HTJ2K_SINGLEHT;
+            break;
+        case 0b1:
+            stream->num_code_blocks = HTJ2K_MULTIHT;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
+            return AVERROR_BUG;
+    }
+
+    bits = (s->ccap[15]>>12) & 1;
+
+    switch (bits) {
+        case 0b0:
+            stream->rgn = HTJ2K_RGNFREE;
+            break;
+        case 0b1:
+            stream->rgn = HTJ2K_RGN;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
+            return AVERROR_BUG;
+    }
+
+    bits = (s->ccap[15]>>11) & 1;
+
+    switch (bits) {
+        case 0b0:
+            stream->code_stream = HTJ2K_HOMOGENOUS;
+            break;
+        case 0b1:
+            stream->code_stream = HTJ2K_HETEROGENOUS;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
+            return AVERROR_BUG;
+    }
+
+    bits = (s->ccap[15]>>6) & 1;
+
+    switch (bits) {
+        case 0b0:
+            stream->reversible_transforms = HTJ2K_HTREV;
+            break;
+        case 0b1:
+            stream->reversible_transforms = HTJ2K_HTIRV;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
+            return AVERROR_BUG;
+    }
+    return  0;
+
+}
 static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
 {
     Jpeg2000CodingStyle *codsty = s->codsty;
@@ -2192,7 +2271,9 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             Jpeg2000Tile *tile;
             Jpeg2000TilePart *tp;
 
+
             if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
+                Jpeg2000HTJ2KCodeStream stream;
                 /* Confirm Marker constraints according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
                 // A.2
                 if (!(s->avctx->profile & (1<<14))){
@@ -2211,6 +2292,9 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
                         return AVERROR_INVALIDDATA;
                     }
                 }
+                if (jpeg2000_set_htj2k_constrains(s,&stream)){
+                    return AVERROR_BUG;
+                };
             }
             if (!s->tile) {
                 av_log(s->avctx, AV_LOG_ERROR, "Missing SIZ\n");
