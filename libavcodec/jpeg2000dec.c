@@ -2199,6 +2199,11 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
                     av_log(s->avctx, AV_LOG_ERROR, "Bit 14 of Rsiz is not equal to 1\n");
                     return AVERROR_INVALIDDATA;
                 }
+                // A.3.1
+                if(!(s->pcap & (1 << (17)))){ // 15th MSB of Pcap
+                    av_log(s->avctx, AV_LOG_ERROR, "Bit 15 of Pcap is not equal to 1\n");
+                    return AVERROR_INVALIDDATA;
+                }
                 // A.5
                 for (int i=0;i<4;i++){
                     if (s->roi_shift[i]>37){
