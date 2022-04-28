@@ -68,29 +68,67 @@ enum Jpeg2000Quantsty { // quantization style
     JPEG2000_QSTY_SI,   // scalar derived
     JPEG2000_QSTY_SE    // scalar expounded
 };
-enum Jpeg2000HtCodeBlocks{
+typedef enum Jpeg2000HtCodeBlocks{
     HTJ2K_HTONLY,       // All code blocks are HT code-blocks
     HTJ2K_HTDECLARED,   // Mixed HT and Part 1 code blocks for a particular tile
     HTJ2K_MIXED         // Mixed HT and Part 1 code blocks but not found in tiles
-};
-enum Jpeg2000NumCodeBlocks{
+} Jpeg2000HtCodeBlocks;
+
+typedef  enum Jpeg2000NumCodeBlocks{
 
     HTJ2K_SINGLEHT , // Zero or one HT set is present for any code block
     HTJ2K_MULTIHT,   // More than one HT sets can be present
-};
-enum Jpeg2000Rgn{
+} Jpeg2000NumCodeBlocks;
+typedef  enum Jpeg2000Rgn{
     HTJ2K_RGN,      // No region of interest marker present
     HTJ2K_RGNFREE,  // Region of interest marker can be present
-};
-enum Jpeg2000CodeStream{
+} Jpeg2000Rgn;
+
+typedef enum Jpeg2000CodeStream{
     HTJ2K_HOMOGENOUS,   // Homogenous code stream
     HTJ2K_HETEROGENOUS, // Heterogeneous code stream
-};
+} Jpeg2000CodeStream;
 
-enum Jpeg2000Reversible{
+typedef  enum Jpeg2000Reversible{
     HTJ2K_HTIRV,  // High throughput irreversible code stream
     HTJ2K_HTREV,  // High throughput reversible code stream.
-};
+} Jpeg2000Reversible;
+
+typedef enum Jpeg2000MagnitudeBounds{
+    MAGB_00 = 8,
+    MAGB_01 = 9,
+    MAGB_02 = 10,
+    MAGB_03 = 11,
+    MAGB_04 = 12,
+    MAGB_05 = 13,
+    MAGB_06 = 14,
+    MAGB_07 = 15,
+    MAGB_08 = 16,
+    MAGB_09 = 17,
+    MAGB_10 = 18,
+    MAGB_11 = 19,
+    MAGB_12 = 20,
+    MAGB_13 = 21,
+    MAGB_14 = 22,
+    MAGB_15 = 23,
+    MAGB_16 = 24,
+    MAGB_17 = 25,
+    MAGB_18 = 26,
+    MAGB_19 = 27,
+    MAGB_20 = 31,
+    MAGB_21 = 35,
+    MAGB_22 = 39,
+    MAGB_23 = 43,
+    MAGB_24 = 47,
+    MAGB_25 = 51,
+    MAGB_26 = 55,
+    MAGB_27 = 59,
+    MAGB_28 = 63,
+    MAGB_29 = 67,
+    MAGB_30 = 71,
+    MAGB_31 = 74,
+} Jpeg2000MagnitudeBounds;
+
 #define JPEG2000_MAX_DECLEVELS 33
 #define JPEG2000_MAX_RESLEVELS (JPEG2000_MAX_DECLEVELS + 1)
 
@@ -252,12 +290,14 @@ typedef struct Jpeg2000Component {
 } Jpeg2000Component;
 
 typedef struct Jpeg2000HTJ2KCodeStream{
-    enum Jpeg2000HtCodeBlocks   code_block;
-    enum Jpeg2000NumCodeBlocks  num_code_blocks;
-    enum Jpeg2000Rgn            rgn;
-    enum Jpeg2000CodeStream     code_stream;
-    enum Jpeg2000Reversible     reversible_transforms;
-}Jpeg2000HTJ2KCodeStream;
+    Jpeg2000HtCodeBlocks    code_block;
+    Jpeg2000NumCodeBlocks   num_code_blocks;
+    Jpeg2000Rgn             rgn;
+    Jpeg2000CodeStream      code_stream;
+    Jpeg2000Reversible      reversible_transforms;
+    Jpeg2000MagnitudeBounds magnitude_bounds;
+} Jpeg2000HTJ2KCodeStream;
+
 /* misc tools */
 static inline int ff_jpeg2000_ceildivpow2(int a, int b)
 {

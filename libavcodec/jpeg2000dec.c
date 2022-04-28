@@ -2170,7 +2170,7 @@ static void jpeg2000_dec_cleanup(Jpeg2000DecoderContext *s)
 static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2KCodeStream *stream)
 {
     uint16_t bits;
-
+    uint8_t  b;
     bits = s->ccap[15] >> 14;
 
     switch (bits) {
@@ -2243,6 +2243,21 @@ static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2K
             av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
             return AVERROR_BUG;
     }
+    bits = (s->ccap[15]) & ((1<<5)-1);
+
+    if (bits==0) // bits == 0
+        b = 8;
+    else if (bits<20) // bits < 20
+        b = bits+8;
+    else if (bits < 31) // 20<= bits < 31
+        b = 4*(bits-19)+27;
+    else // bits == 31
+        b= 74;
+    // TODO. Add a cast checker here.
+    // This is dangerous if we got the conversion wrong, before submitting to ffmpeg
+    // ensure we check no cast is undefined.
+    // @caleb
+    stream->magnitude_bounds = (Jpeg2000MagnitudeBounds ) b;
     return  0;
 
 }
@@ -2274,6 +2289,7 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
 
             if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
                 Jpeg2000HTJ2KCodeStream stream;
+                av_log(s->avctx,AV_LOG_ERROR,"Bit 0-4 of ccap15 %d\n",s->ccap[15]);
                 /* Confirm Marker constraints according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
                 // A.2
                 if (!(s->avctx->profile & (1<<14))){
