@@ -1008,7 +1008,7 @@ static int get_cap(Jpeg2000DecoderContext *s, int len) {
 
     if (len < 8 || len > 70){
         // spec requires cap length to be between 8-70
-        av_log(s->avctx,AV_LOG_ERROR,"Invalid CAP length '%d'. Length should be between 5-70\n",len);
+        av_log(s->avctx,AV_LOG_ERROR,"Invalid CAP length '%d'. Length should be between 8-70\n",len);
         return AVERROR_INVALIDDATA;
     }
 
@@ -2324,7 +2324,6 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
 
             if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
                 Jpeg2000HTJ2KCodeStream stream;
-                av_log(s->avctx,AV_LOG_ERROR,"Bit 0-4 of ccap15 %d\n",s->ccap[15]);
                 /* Confirm Marker constraints according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
                 // A.2
                 if (!(s->avctx->profile & (1<<14))){
