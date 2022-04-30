@@ -1042,7 +1042,6 @@ static int get_cpf(Jpeg2000DecoderContext *s, int len) {
      * codestreams to and from codestreams that conform to Rec. ITU-T T.800 | ISO/IEC 15444-1.
      */
 
-    int cpfnum; //  equal to  value found in bits 0-11 of Rsiz
     int n;
 
     if ((len < 4) || (len > 65534)) {
@@ -1052,7 +1051,6 @@ static int get_cpf(Jpeg2000DecoderContext *s, int len) {
 
     n = (len-2)/2;
 
-    cpfnum = s->avctx->profile & (1<<12)-1;
     s->pcpf = av_calloc(n,sizeof (uint16_t));
 
     if (!s->pcpf) {  // calloc failed
