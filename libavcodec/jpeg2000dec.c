@@ -139,6 +139,8 @@ typedef struct Jpeg2000DecoderContext {
     /*Extended capabilities*/
     uint32_t pcap;
     uint16_t ccap[32];
+
+    uint16_t *pcpf; //Pcpf_i , found in CPF marker , see section A.6 of HTJ2K spec
 } Jpeg2000DecoderContext;
 
 /* get_bits functions for JPEG2000 packet bitstream
@@ -1033,6 +1035,37 @@ static int get_cap(Jpeg2000DecoderContext *s, int len) {
 
     return 0;
 }
+
+static int get_cpf(Jpeg2000DecoderContext *s, int len) {
+    /*
+     * The corresponding profile (CPF) marker segment is provided to facilitate the reversible transcoding of HTJ2K
+     * codestreams to and from codestreams that conform to Rec. ITU-T T.800 | ISO/IEC 15444-1.
+     */
+
+    int cpfnum; //  equal to  value found in bits 0-11 of Rsiz
+    int n;
+
+    if ((len < 4) || (len > 65534)) {
+        av_log(s->avctx,AV_LOG_ERROR,"CPF marker length %d not in range 4-65534",len);
+        return AVERROR_INVALIDDATA;
+    }
+
+    n = (len-2)/2;
+
+    cpfnum = s->avctx->profile & (1<<12)-1;
+    s->pcpf = av_calloc(n,sizeof (uint16_t));
+
+    if (!s->pcpf) {  // calloc failed
+        av_log(s->avctx,AV_LOG_FATAL,"Out of memory. Cannot reserve space of size %d for Pcpf",n);
+        // TODO:Change this once we figure out how to report oom errors
+        return AVERROR_BUG;
+    }
+    for (int i=0;i<n;i++)
+        s->pcpf[i] = bytestream2_get_be16u(&(s->g));
+
+    return 0;
+}
+
 static int init_tile(Jpeg2000DecoderContext *s, int tileno)
 {
     int compno;
@@ -2165,6 +2198,8 @@ static void jpeg2000_dec_cleanup(Jpeg2000DecoderContext *s)
     memset(&s->poc  , 0, sizeof(s->poc));
     s->numXtiles = s->numYtiles = 0;
     s->ncomponents = 0;
+
+    av_freep(&s->pcpf);
 }
 
 static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2KCodeStream *stream)
