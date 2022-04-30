@@ -1023,8 +1023,8 @@ static int get_cap(Jpeg2000DecoderContext *s, int len) {
                "Length of marker`%d` not equal to set bits in Pcap segment(bits set to 1 in Pcap are %d).\n",lcap,pcap_ones);
         return AVERROR_INVALIDDATA;
     }
-    /*  According to the spec again Ccapⁱ exists if and only if the ith byte of Pcap is set.
-     *  Since pcap can have 32 bytes, loop until we read all Ccaps'  of set bits
+    /*  According to the spec again Ccapⁱ exists if and only if the ith bit of Pcap is set.
+     *  Since pcap can have 32 bits, we loop until we read all Ccaps'  of set bits
      *
      *  Also since the spec addresses Pcap¹ as the most significant bit of 1(31st bit),the
      *  array also takes that into account, storing at ccap[1] if (Pcap & 1<<31) == 1
@@ -2408,8 +2408,8 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
                 return AVERROR_INVALIDDATA;
             }
             /*
-             * According to the spec decoding a CAP marker happens only if the 14th bit of Rsiz is set to 1.
-             * To indicate the spec conforming decoder needs extended capabilities to decode the image.
+             * According to the spec decoding a CAP marker is mandatory only if the 14th bit of Rsiz is set to 1.
+             * To indicate the decoder needs to implement extended capabilities to decode the image.
              * If the bit is not set, we skip over parsing the CAP segment.
              */
             if (s->avctx->profile & (1<<14)) {
