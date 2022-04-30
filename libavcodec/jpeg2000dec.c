@@ -2423,6 +2423,9 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
                 bytestream2_skip(&(s->g),len-2);
             }
             break;
+        case JPEG2000_CPF:
+            ret = get_cpf(s,len);
+            break;
         case JPEG2000_COC:
             ret = get_coc(s, codsty, properties);
             break;
