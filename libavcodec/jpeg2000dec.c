@@ -2221,68 +2221,33 @@ static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2K
             return AVERROR_PATCHWELCOME;
     }
 
-    bits = (s->ccap[15]>>13) & 1;
+    if ((s->ccap[15] >> 13) & 1)
+        stream->num_code_blocks = HTJ2K_MULTIHT;
+    else
+        stream->num_code_blocks = HTJ2K_SINGLEHT;
 
-    switch (bits) {
-        case 0b0:
-            stream->num_code_blocks = HTJ2K_SINGLEHT;
-            break;
-        case 0b1:
-            stream->num_code_blocks = HTJ2K_MULTIHT;
-            break;
-        default:
-            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
-            return AVERROR_BUG;
-    }
+    if ((s->ccap[15] >> 12) & 1)
+        stream->rgn = HTJ2K_RGN;
+    else
+        stream->rgn = HTJ2K_RGNFREE;
 
-    bits = (s->ccap[15]>>12) & 1;
+    if ((s->ccap[15] >> 11) & 1)
+        stream->code_stream = HTJ2K_HETEROGENOUS;
+    else
+        stream->code_stream = HTJ2K_HOMOGENOUS;
 
-    switch (bits) {
-        case 0b0:
-            stream->rgn = HTJ2K_RGNFREE;
-            break;
-        case 0b1:
-            stream->rgn = HTJ2K_RGN;
-            break;
-        default:
-            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
-            return AVERROR_BUG;
-    }
+    if ((s->ccap[15] >> 5) & 1)
+        stream->reversible_transforms = HTJ2K_HTIRV;
+    else
+        stream->reversible_transforms = HTJ2K_HTREV;
 
-    bits = (s->ccap[15]>>11) & 1;
-
-    switch (bits) {
-        case 0b0:
-            stream->code_stream = HTJ2K_HOMOGENOUS;
-            break;
-        case 0b1:
-            stream->code_stream = HTJ2K_HETEROGENOUS;
-            break;
-        default:
-            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
-            return AVERROR_BUG;
-    }
-
-    bits = (s->ccap[15]>>6) & 1;
-
-    switch (bits) {
-        case 0b0:
-            stream->reversible_transforms = HTJ2K_HTREV;
-            break;
-        case 0b1:
-            stream->reversible_transforms = HTJ2K_HTIRV;
-            break;
-        default:
-            av_log(s->avctx,AV_LOG_ERROR,"Unreachable area reached");
-            return AVERROR_BUG;
-    }
-    bits = (s->ccap[15]) & ((1<<5)-1);
+    bits = (s->ccap[15]) & ((1 << 5)-1);
 
     if (bits==0) // bits == 0
         b = 8;
     else if (bits<20) // bits < 20
         b = bits+8;
-    else if (bits < 31) // 20<= bits < 31
+    else if (bits < 31) // 20 <= bits < 31
         b = 4*(bits-19)+27;
     else // bits == 31
         b= 74;
