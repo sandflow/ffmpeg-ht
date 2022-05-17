@@ -108,6 +108,12 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t p0 = 0;          // Number of placeholder passes.
     uint32_t Lcup = 0;       // Length of HT cleanup segment.
     uint32_t Lref = 0;       // Length of Refinement segment.
+    uint32_t Scup = 0;       // HT cleanup segment suffix length.
+    uint32_t Pcup = 0;       // HT cleanup segment prefix length.
+
+    uint8_t *Dcup;           // Byte of an HT cleanup segment.
+    uint8_t *Dref;           // Byte of an HT refinement segment.
+
     const uint8_t Sskip = 0; // Number of HT Sets preceding the given set.
     int z_blk;               // Number of ht coding pass
     uint8_t empty_passes;
@@ -136,7 +142,10 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass length must be at least 2 bytes in length");
         return AVERROR_INVALIDDATA;
     }
+    Dcup = cblk->data;
 
+    Scup = (Dcup[Lcup-1]<<4) | Dcup[Lcup-2] & 0x0F;
+    Pcup = Lcup - Scup;
 
     return 1;
 }
