@@ -118,3 +118,31 @@ typedef struct Jpeg2000DecoderContext {
 } Jpeg2000DecoderContext;
 
 
+
+
+// pix_fmts with lower bpp have to be listed before
+// similar pix_fmts with higher bpp.
+#define RGB_PIXEL_FORMATS   AV_PIX_FMT_PAL8,AV_PIX_FMT_RGB24,AV_PIX_FMT_RGBA,AV_PIX_FMT_RGB48,AV_PIX_FMT_RGBA64
+#define GRAY_PIXEL_FORMATS  AV_PIX_FMT_GRAY8,AV_PIX_FMT_GRAY8A,AV_PIX_FMT_GRAY16,AV_PIX_FMT_YA16
+#define YUV_PIXEL_FORMATS   AV_PIX_FMT_YUV410P,AV_PIX_FMT_YUV411P,AV_PIX_FMT_YUVA420P, \
+                            AV_PIX_FMT_YUV420P,AV_PIX_FMT_YUV422P,AV_PIX_FMT_YUVA422P, \
+                            AV_PIX_FMT_YUV440P,AV_PIX_FMT_YUV444P,AV_PIX_FMT_YUVA444P, \
+                            AV_PIX_FMT_YUV420P9,AV_PIX_FMT_YUV422P9,AV_PIX_FMT_YUV444P9, \
+                            AV_PIX_FMT_YUVA420P9,AV_PIX_FMT_YUVA422P9,AV_PIX_FMT_YUVA444P9, \
+                            AV_PIX_FMT_YUV420P10,AV_PIX_FMT_YUV422P10,AV_PIX_FMT_YUV444P10, \
+                            AV_PIX_FMT_YUVA420P10,AV_PIX_FMT_YUVA422P10,AV_PIX_FMT_YUVA444P10, \
+                            AV_PIX_FMT_YUV420P12,AV_PIX_FMT_YUV422P12,AV_PIX_FMT_YUV444P12, \
+                            AV_PIX_FMT_YUV420P14,AV_PIX_FMT_YUV422P14,AV_PIX_FMT_YUV444P14, \
+                            AV_PIX_FMT_YUV420P16,AV_PIX_FMT_YUV422P16,AV_PIX_FMT_YUV444P16, \
+                            AV_PIX_FMT_YUVA420P16,AV_PIX_FMT_YUVA422P16,AV_PIX_FMT_YUVA444P16
+#define XYZ_PIXEL_FORMATS   AV_PIX_FMT_XYZ12
+
+static const enum AVPixelFormat rgb_pix_fmts[]  = {RGB_PIXEL_FORMATS};
+static const enum AVPixelFormat gray_pix_fmts[] = {GRAY_PIXEL_FORMATS};
+static const enum AVPixelFormat yuv_pix_fmts[]  = {YUV_PIXEL_FORMATS};
+static const enum AVPixelFormat xyz_pix_fmts[]  = {XYZ_PIXEL_FORMATS,
+                                                  YUV_PIXEL_FORMATS};
+static const enum AVPixelFormat all_pix_fmts[]  = {RGB_PIXEL_FORMATS,
+                                                  GRAY_PIXEL_FORMATS,
+                                                  YUV_PIXEL_FORMATS,
+                                                  XYZ_PIXEL_FORMATS};
