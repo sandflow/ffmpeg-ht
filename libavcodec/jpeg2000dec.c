@@ -42,7 +42,6 @@
 #include "jpeg2000.h"
 #include "jpeg2000dsp.h"
 #include "profiles.h"
-#include "jpeg2000dec.h"
 #include "jpeg2000_htj2k.h"
 
 /* get_bits functions for JPEG2000 packet bitstream
@@ -146,33 +145,6 @@ static int pix_fmt_match(enum AVPixelFormat pix_fmt, int components,
     }
     return match;
 }
-
-// pix_fmts with lower bpp have to be listed before
-// similar pix_fmts with higher bpp.
-#define RGB_PIXEL_FORMATS   AV_PIX_FMT_PAL8,AV_PIX_FMT_RGB24,AV_PIX_FMT_RGBA,AV_PIX_FMT_RGB48,AV_PIX_FMT_RGBA64
-#define GRAY_PIXEL_FORMATS  AV_PIX_FMT_GRAY8,AV_PIX_FMT_GRAY8A,AV_PIX_FMT_GRAY16,AV_PIX_FMT_YA16
-#define YUV_PIXEL_FORMATS   AV_PIX_FMT_YUV410P,AV_PIX_FMT_YUV411P,AV_PIX_FMT_YUVA420P, \
-                            AV_PIX_FMT_YUV420P,AV_PIX_FMT_YUV422P,AV_PIX_FMT_YUVA422P, \
-                            AV_PIX_FMT_YUV440P,AV_PIX_FMT_YUV444P,AV_PIX_FMT_YUVA444P, \
-                            AV_PIX_FMT_YUV420P9,AV_PIX_FMT_YUV422P9,AV_PIX_FMT_YUV444P9, \
-                            AV_PIX_FMT_YUVA420P9,AV_PIX_FMT_YUVA422P9,AV_PIX_FMT_YUVA444P9, \
-                            AV_PIX_FMT_YUV420P10,AV_PIX_FMT_YUV422P10,AV_PIX_FMT_YUV444P10, \
-                            AV_PIX_FMT_YUVA420P10,AV_PIX_FMT_YUVA422P10,AV_PIX_FMT_YUVA444P10, \
-                            AV_PIX_FMT_YUV420P12,AV_PIX_FMT_YUV422P12,AV_PIX_FMT_YUV444P12, \
-                            AV_PIX_FMT_YUV420P14,AV_PIX_FMT_YUV422P14,AV_PIX_FMT_YUV444P14, \
-                            AV_PIX_FMT_YUV420P16,AV_PIX_FMT_YUV422P16,AV_PIX_FMT_YUV444P16, \
-                            AV_PIX_FMT_YUVA420P16,AV_PIX_FMT_YUVA422P16,AV_PIX_FMT_YUVA444P16
-#define XYZ_PIXEL_FORMATS   AV_PIX_FMT_XYZ12
-
-static const enum AVPixelFormat rgb_pix_fmts[]  = {RGB_PIXEL_FORMATS};
-static const enum AVPixelFormat gray_pix_fmts[] = {GRAY_PIXEL_FORMATS};
-static const enum AVPixelFormat yuv_pix_fmts[]  = {YUV_PIXEL_FORMATS};
-static const enum AVPixelFormat xyz_pix_fmts[]  = {XYZ_PIXEL_FORMATS,
-                                                   YUV_PIXEL_FORMATS};
-static const enum AVPixelFormat all_pix_fmts[]  = {RGB_PIXEL_FORMATS,
-                                                   GRAY_PIXEL_FORMATS,
-                                                   YUV_PIXEL_FORMATS,
-                                                   XYZ_PIXEL_FORMATS};
 
 /* marker segments */
 /* get sizes and offsets of image, tiles; number of components */
@@ -1282,7 +1254,7 @@ static int jpeg2000_decode_packets_po_iteration(Jpeg2000DecoderContext *s, Jpeg2
     int step_x, step_y;
 
     switch (Ppoc) {
-    case JPEG2000_PGOD_RLCP:
+    case JPEG2000_PGOD_RLCP :
         av_log(s->avctx, AV_LOG_DEBUG, "Progression order RLCP\n");
         ok_reslevel = 1;
         for (reslevelno = RSpoc; ok_reslevel && reslevelno < REpoc; reslevelno++) {
@@ -1949,16 +1921,23 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile
                     for (cblkno = 0;
                          cblkno < prec->nb_codeblocks_width * prec->nb_codeblocks_height;
                          cblkno++) {
-                        int x, y;
+                        int x, y,ret;
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
-                        int ret = decode_cblk(s, codsty, &t1, cblk,
+                        if (s->is_htj2k)
+                          ret = decode_htj2k(s, codsty, &t1, cblk,
+                                             cblk->coord[0][1] - cblk->coord[0][0],
+                                             cblk->coord[1][1] - cblk->coord[1][0],
+                                             bandpos, comp->roi_shift);
+                        else
+                          ret = decode_cblk(s, codsty, &t1, cblk,
                                     cblk->coord[0][1] - cblk->coord[0][0],
                                     cblk->coord[1][1] - cblk->coord[1][0],
                                     bandpos, comp->roi_shift);
+
                         if (ret)
-                            coded = 1;
+                          coded = 1;
                         else
-                            continue;
+                          continue;
                         x = cblk->coord[0][0] - band->coord[0][0];
                         y = cblk->coord[1][0] - band->coord[1][0];
 
@@ -2109,7 +2088,7 @@ static void jpeg2000_dec_cleanup(Jpeg2000DecoderContext *s)
 static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2KCodeStream *stream)
 {
     uint16_t bits;
-    uint8_t  b;
+    uint8_t  mag_b;
     bits = s->ccap[15] >> 14;
 
     switch (bits) {
@@ -2149,19 +2128,19 @@ static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2K
 
     bits = (s->ccap[15]) & ((1 << 5)-1);
 
-    if (bits==0) // bits == 0
-        b = 8;
-    else if (bits<20) // bits < 20
-        b = bits+8;
-    else if (bits < 31) // 20 <= bits < 31
-        b = 4*(bits-19)+27;
-    else // bits == 31
-        b= 74;
+    if (bits == 0)
+        mag_b = 8;
+    else if (bits < 20)
+        mag_b = bits + 8;
+    else if (bits < 31)
+        mag_b = 4 * (bits - 19) + 27;
+    else
+        mag_b= 74;
     // TODO. Add a cast checker here.
     // This is dangerous if we got the conversion wrong, before submitting to ffmpeg
     // ensure we check no cast is undefined.
     // @caleb
-    stream->magnitude_bounds = (Jpeg2000MagnitudeBounds ) b;
+    stream->magnitude_bounds = (Jpeg2000MagnitudeBounds ) mag_b;
     return  0;
 
 }
