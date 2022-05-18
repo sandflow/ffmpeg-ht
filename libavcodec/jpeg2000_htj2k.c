@@ -26,6 +26,39 @@
 
 #include "jpeg2000_htj2k.h"
 
+/* Initialize State variables to zero */
+static void init_zero(StateVars *s)
+{
+    s->tmp = 0;
+    s->bits = 0;
+    s->tmp = 0;
+    s->last = 0;
+}
+/*Initialize MEL bit stream*/
+static void init_mel(StateVars *s, uint32_t Pcup)
+{
+    init_zero(s);
+    s->pos = Pcup;
+}
+
+static void init_vlc(StateVars *s, uint32_t Lcup, uint8_t *Dcup)
+{
+    s->tmp = Lcup - 3;
+    // Vlc_Last = modDcup(Dcup, Lcup-2)
+    // which becomes  Dcup[pos] | 0x0F
+    s->last = Dcup[Lcup - 2] | 0x0F;
+    s->tmp = (s->last) >> 4;
+    s->bits = ((s->tmp & 7) < 7) ? 4 : 3;
+}
+
+static void init_mag_ref(StateVars *s, uint32_t Lref)
+{
+    s->pos = Lref - 1;
+    s->bits = 0;
+    s->last = 0xFF;
+    s->tmp = 0;
+}
+
 static int jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b)
 {
     buffer->bit_buf = 0;
@@ -34,7 +67,7 @@ static int jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b)
     return 0;
 }
 
-static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s,Jpeg2000ByteBuffer *buffer)
+static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer)
 {
     uint64_t tmp; // temporary storage for bytes
     size_t bytes_left;
@@ -97,7 +130,6 @@ static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s,Jpeg2000ByteBuf
     buffer->bit_buf |= (uint64_t)tmp << (64 - buffer->bits_left);
     return 0;
 }
-
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
     /* (cae) : Notes in no order about the code structure
@@ -105,20 +137,26 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
      * cblk -> Values mainly filled in  jpeg2000dec.c/jpeg2000_decode_packet.
      *
      * */
-    uint8_t p0 = 0;          // Number of placeholder passes.
-    uint32_t Lcup = 0;       // Length of HT cleanup segment.
-    uint32_t Lref = 0;       // Length of Refinement segment.
-    uint32_t Scup = 0;       // HT cleanup segment suffix length.
-    uint32_t Pcup = 0;       // HT cleanup segment prefix length.
+    uint8_t p0 = 0;    // Number of placeholder passes.
+    uint32_t Lcup = 0; // Length of HT cleanup segment.
+    uint32_t Lref = 0; // Length of Refinement segment.
+    uint32_t Scup = 0; // HT cleanup segment suffix length.
+    uint32_t Pcup = 0; // HT cleanup segment prefix length.
 
-    uint8_t *Dcup;           // Byte of an HT cleanup segment.
-    uint8_t *Dref;           // Byte of an HT refinement segment.
+    uint8_t *Dcup; // Byte of an HT cleanup segment.
+    uint8_t *Dref; // Byte of an HT refinement segment.
 
     const uint8_t Sskip = 0; // Number of HT Sets preceding the given set.
     int z_blk;               // Number of ht coding pass
     uint8_t empty_passes;
 
-    if (cblk->npasses==0){
+    StateVars mag_sgn;  // Magnitude and Sign
+    StateVars mel;      // Adaptive run-length coding
+    StateVars vlc;      // Variable Length coding
+    StateVars sig_prop; // Significance propagation
+    StateVars mag_ref;  // Magnitude and refinement.
+
+    if (cblk->npasses == 0) {
         return 0;
     }
     av_log(s->avctx, AV_LOG_TRACE, "Initializing HTJ2K decoder\n");
@@ -143,9 +181,25 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         return AVERROR_INVALIDDATA;
     }
     Dcup = cblk->data;
+    // Dref comes after the refinement segment.
+    Dref = cblk->data + Lcup;
 
-    Scup = (Dcup[Lcup-1]<<4) | Dcup[Lcup-2] & 0x0F;
+    Scup = (Dcup[Lcup - 1] << 4) | (Dcup[Lcup - 2] & 0x0F);
+
+    if (Scup < 2 || Scup > Lcup || Scup > 4079) {
+        av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass suffix length is invalid %d", Scup);
+        return AVERROR_INVALIDDATA;
+    }
+
     Pcup = Lcup - Scup;
+
+    init_zero(&mag_sgn);
+    init_zero(&sig_prop);
+
+    init_mel(&mel, Pcup);
+    init_vlc(&vlc, Lcup, Dcup);
+
+    init_mag_ref(&mag_ref, Lref);
 
     return 1;
 }

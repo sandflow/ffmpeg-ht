@@ -28,6 +28,21 @@
 
 #include "bytestream.h"
 
+typedef struct Jpeg2000ByteBuffer {
+    uint8_t bits_left;   // number of bits remaining in the byte buffer
+    uint64_t bit_buf;    // actual byte buffer
+    GetByteContext *src; // source from which we pull our data from
+} Jpeg2000ByteBuffer;
+
+/*State machine variables*/
+typedef struct StateVars {
+    uint32_t pos;
+    uint32_t bits;
+    uint32_t tmp;
+    uint32_t last;
+
+} StateVars;
+
 /**
  * Determine if a word has a zero byte
  *
@@ -52,22 +67,17 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
 
-typedef struct Jpeg2000ByteBuffer {
-    uint8_t bits_left; // number of bits remaining in the byte buffer
-    uint64_t bit_buf;  // actual byte buffer
-    GetByteContext *src; // source from which we pull our data from
-} Jpeg2000ByteBuffer;
-
 /* Initialize the byte buffer for HTJ2K decoding */
 static int jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
 
 /**
  * Refill the bit buffer with new bytes unstuffing bits if needed
  *
+ * @param s. A jpeg2000 decoder context
  * @param buffer THe current bit-buffer where we are adding new bits
- * @param b The source where we are pulling bits
+ *
  * */
-static int jpeg2000_refill_and_unsfuff( Jpeg2000DecoderContext *s,Jpeg2000ByteBuffer *buffer);
+static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer);
 /**
  * Decode a jpeg2000 High throughtput bitstream
  *
