@@ -56,7 +56,7 @@ typedef struct MelDecoderState{
 
 } MelDecoderState;
 /**
- * @brief Table 2 clause 7.3.3
+ * @brief Table 2 in clause 7.3.3
  * */
 const static uint8_t MEL_E[13] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
@@ -125,11 +125,16 @@ static  int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s,Jpeg2000Cblk *c
  *
  * Described in Clause 7.3.5. 
  *
- * @param q         Quad index
- * @param context   Significane of a set of neighbouring samples
+ * @param mel_state     Adaptive run length state machine variables
+ * @param mel_stream    Adaptive run length bit stream variables.
+ * @param q             Quad index
+ * @param context       Significane of a set of neighbouring samples
+ * @param Dcup          Bytes of the HT cleanup segment
+ * @param Lcup          Length of the HT cleanup segment
+ *
  * 
  */
-static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream,uint16_t q,uint16_t context);
+static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream,uint8_t *Dcup,uint16_t q,uint16_t context,uint32_t Lcup);
 
 /**
  * @brief Initialize the mel decoder by zeroing all its variables
@@ -143,11 +148,25 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
  * @brief Decode an adaptive run length symbol
  * 
- * @param mel_state  Variables for MEL state machine
- * @param mel   MEL bit stream struct 
+ * @param mel_state Variables for MEL state machine
+ * @param mel       MEL bit stream struct 
+ * @param Dcup      Bytes of the HT cleanup segment
+ * @param Lcup      Length of the HT cleanup segment
  * @return int 
  */
-static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel);
+static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel,const uint8_t *Dcup, uint32_t Lcup);
+
+/**
+ * @brief Recover Adaptive run length bits from the byte stream
+ * 
+ * @param mel_stream    The MEL byte stream state variables
+ * @param Dcup          Bytes of the HT segment
+ * @param Lcup          Length of the HT cleanup segment. 
+ *         
+ * @return int          THe next MEL bit      
+ */
+static int jpeg2000_import_mel_bit(StateVars *mel_stream,const uint8_t *Dcup,uint32_t Lcup);
+
 /**
  * Decode a jpeg2000 High throughtput bitstream
  *

@@ -142,7 +142,7 @@ static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBu
     return 0;
 }
 
-static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream)
+static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
 {
     uint8_t eval;
     uint8_t bit;
@@ -150,16 +150,34 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_st
     if (mel_state->run == 0 && mel_state->one == 0) {
 
         eval = MEL_E[mel_state->k];
+
+        bit = jpeg2000_import_mel_bit(mel_stream, Dcup, Lcup);
     }
     return 0;
 }
 
-static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream, uint16_t q, uint16_t context)
+static int jpeg2000_import_mel_bit(StateVars *mel_stream,const uint8_t *Dcup,uint32_t Lcup){
+
+    if (mel_stream->bits==0){
+        mel_stream->bits = (mel_stream->tmp==0xFF)?7:8;
+        if (mel_stream->pos < Lcup){
+            mel_stream->tmp = Dcup[mel_stream->pos];
+            mel_stream->pos+=1;
+        } else
+            mel_stream->tmp = 0xFF;
+    }
+    mel_stream->bits -=  1;
+
+    return (mel_stream->tmp >> mel_stream->bits) & 1;
+
+}
+
+static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream,uint8_t *Dcup, uint16_t q, uint16_t context,uint32_t Lcup)
 {
 
     uint8_t sym;
     if (context == 0) {
-        sym = jpeg2000_decode_mel_sym(mel_state, mel_stream);
+        sym = jpeg2000_decode_mel_sym(mel_state, mel_stream,Dcup,Lcup);
         if (sym == 0) {
             //
         }
