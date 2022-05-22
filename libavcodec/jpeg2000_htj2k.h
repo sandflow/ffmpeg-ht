@@ -34,21 +34,39 @@ typedef struct Jpeg2000ByteBuffer {
     GetByteContext *src; // source from which we pull our data from
 } Jpeg2000ByteBuffer;
 
-/*State machine variables*/
+/**
+ * @brief State Machine variables for block decoding
+ * 
+ */
 typedef struct StateVars {
-    uint32_t pos;
+    int32_t pos;
     uint32_t bits;
     uint32_t tmp;
     uint32_t last;
 
 } StateVars;
+/**
+ * @brief Adaptive run length decoding algorithm
+ * 
+ */
+typedef struct MelDecoderState{
+    uint8_t k;
+    uint8_t run;
+    uint8_t one;
+
+} MelDecoderState;
+/**
+ * @brief Table 2 clause 7.3.3
+ * */
+const static uint8_t MEL_E[13] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
+
 
 /**
  * Determine if a word has a zero byte
  *
  * @param dword value to check if it contains  zeroe bytes
  *
- * @returns a number whose high bit is set if a byte at a position  is equal to zero
+ * @returns 0 if the dword has no zero 1 otherwise
  * */
 static uint32_t has_zero(uint32_t dword)
 {
@@ -61,14 +79,21 @@ static uint32_t has_zero(uint32_t dword)
  *
  * @param dword value to check if it contains some bytes
  * @param bytes the needle we are looking for in the haystack
+ * 
+ * @returns zero if the dword doesn't contain `bytes`, 1 otherwise.      
  * */
 static uint32_t has_byte(uint32_t dword, uint8_t byte)
 {
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
 
-/* Initialize the byte buffer for HTJ2K decoding */
-static int jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
+/**
+ * @brief Initialize BitStream decoder
+ * 
+ * @param buffer A struct containing BitStream variables
+ * @param b The byte buffer we will be extracting bits from.
+  */
+static void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
 
 /**
  * Refill the bit buffer with new bytes unstuffing bits if needed
@@ -78,6 +103,51 @@ static int jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b)
  *
  * */
 static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer);
+
+/**
+ * Entry point for Cleanup segment decoding
+ *
+ *
+ * @param s         JPeg20000 decoder context
+ * @param cblk      Code block for this packet.
+ * @param Dcup      The bytes of a HT cleanup segment
+ * @param Lcup      Length in bytes of the HT cleanup segment
+ * @param Pcup      Prefix length of the HT cleanup segment.
+ * @param width     Width of the code block
+ * @param height    Height of the code block
+ *
+ * */
+static  int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s,Jpeg2000Cblk *cblk,uint8_t *Dcup, uint32_t Lcup,uint32_t Pcup,int width,int heigth);
+
+/**
+ * @brief Decode significance and EMB patterns
+ * 
+ *
+ * Described in Clause 7.3.5. 
+ *
+ * @param q         Quad index
+ * @param context   Significane of a set of neighbouring samples
+ * 
+ */
+static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream,uint16_t q,uint16_t context);
+
+/**
+ * @brief Initialize the mel decoder by zeroing all its variables
+ * 
+ *  Described in Clause 7.1.3
+ *
+ * @param mel_state  An allocated but uninitialized MEL decoder
+ */
+static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
+
+/**
+ * @brief Decode an adaptive run length symbol
+ * 
+ * @param mel_state  Variables for MEL state machine
+ * @param mel   MEL bit stream struct 
+ * @return int 
+ */
+static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel);
 /**
  * Decode a jpeg2000 High throughtput bitstream
  *
