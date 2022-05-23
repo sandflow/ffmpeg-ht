@@ -24,6 +24,7 @@
  * JPEG2000 High Throughtput block decoder
  */
 #include "jpeg2000dec.h"
+#include <libavutil/log.h>
 #include <stdint.h>
 
 #include "bytestream.h"
@@ -36,7 +37,7 @@ typedef struct Jpeg2000ByteBuffer {
 
 /**
  * @brief State Machine variables for block decoding
- * 
+ *
  */
 typedef struct StateVars {
     int32_t pos;
@@ -47,9 +48,9 @@ typedef struct StateVars {
 } StateVars;
 /**
  * @brief Adaptive run length decoding algorithm
- * 
+ *
  */
-typedef struct MelDecoderState{
+typedef struct MelDecoderState {
     uint8_t k;
     uint8_t run;
     uint8_t one;
@@ -58,8 +59,7 @@ typedef struct MelDecoderState{
 /**
  * @brief Table 2 in clause 7.3.3
  * */
-const static uint8_t MEL_E[13] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
-
+const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
 /**
  * Determine if a word has a zero byte
@@ -79,8 +79,8 @@ static uint32_t has_zero(uint32_t dword)
  *
  * @param dword value to check if it contains some bytes
  * @param bytes the needle we are looking for in the haystack
- * 
- * @returns zero if the dword doesn't contain `bytes`, 1 otherwise.      
+ *
+ * @returns zero if the dword doesn't contain `bytes`, 1 otherwise.
  * */
 static uint32_t has_byte(uint32_t dword, uint8_t byte)
 {
@@ -89,10 +89,10 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
 
 /**
  * @brief Initialize BitStream decoder
- * 
+ *
  * @param buffer A struct containing BitStream variables
  * @param b The byte buffer we will be extracting bits from.
-  */
+ */
 static void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
 
 /**
@@ -102,43 +102,57 @@ static void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b
  * @param buffer THe current bit-buffer where we are adding new bits
  *
  * */
-static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer);
+static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer, uint8_t *array, uint32_t *pos, uint32_t len);
 
 /**
  * Entry point for Cleanup segment decoding
  *
  *
- * @param s         JPeg20000 decoder context
- * @param cblk      Code block for this packet.
- * @param Dcup      The bytes of a HT cleanup segment
- * @param Lcup      Length in bytes of the HT cleanup segment
- * @param Pcup      Prefix length of the HT cleanup segment.
- * @param width     Width of the code block
- * @param height    Height of the code block
+ * @param s             JPeg20000 decoder context
+ * @param cblk          Code block for this packet.
+ * @param mel_state     Adaptive Run Length State variables
+ * @param mel_stream    Adaptive Run Length BitStream variables.
+ * @param Dcup          The bytes of a HT cleanup segment
+ * @param Lcup          Length in bytes of the HT cleanup segment
+ * @param Pcup          Prefix length of the HT cleanup segment.
+ * @param width         Width of the code block
+ * @param height        Height of the code block
  *
  * */
-static  int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s,Jpeg2000Cblk *cblk,uint8_t *Dcup, uint32_t Lcup,uint32_t Pcup,int width,int heigth);
+static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state,
+                                      StateVars *mel_stream, StateVars *vlc_stream, uint8_t *Dcup,
+                                      uint32_t Lcup, uint32_t Pcup, int width, int height);
 
 /**
  * @brief Decode significance and EMB patterns
- * 
  *
- * Described in Clause 7.3.5. 
  *
+ * Described in Clause 7.3.5.
+ *
+ * @param s             A jpeg2000 decoder context.
  * @param mel_state     Adaptive run length state machine variables
  * @param mel_stream    Adaptive run length bit stream variables.
+ * @param vlc_stream    Variable Length coding bit stream variables.
+ * @param vlc_table     A Variable length Context table described in Annex C.
  * @param q             Quad index
- * @param context       Significane of a set of neighbouring samples
+ * @param context       Significance of a set of neighbouring samples
  * @param Dcup          Bytes of the HT cleanup segment
- * @param Lcup          Length of the HT cleanup segment
- *
- * 
+ * @param sig_pat       Significance pattern  ρq
+ * @param res_off       Unsigned residual offset  uqoff
+ * @param emb_pat_k     Exponent Magnitude Pattern.
+ * @param emb_pat_1     Exponent Magnitude Pattern.
+ * @param pos           Position to write values in the above 4 parameters
+ * @param Lcup          Length of the HT cleanup segment.
+ * @param Pcup          HT cleanup segment prefix length.
  */
-static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream,uint8_t *Dcup,uint16_t q,uint16_t context,uint32_t Lcup);
+static void jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
+                                    StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat,
+                                    uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
+                                    uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
 
 /**
  * @brief Initialize the mel decoder by zeroing all its variables
- * 
+ *
  *  Described in Clause 7.1.3
  *
  * @param mel_state  An allocated but uninitialized MEL decoder
@@ -147,28 +161,49 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 
 /**
  * @brief Decode an adaptive run length symbol
- * 
+ *
  * @param mel_state Variables for MEL state machine
- * @param mel       MEL bit stream struct 
+ * @param mel       MEL bit stream struct
  * @param Dcup      Bytes of the HT cleanup segment
  * @param Lcup      Length of the HT cleanup segment
- * @return int 
+ *
+ * @return int
  */
-static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel,const uint8_t *Dcup, uint32_t Lcup);
+static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
  * @brief Recover Adaptive run length bits from the byte stream
- * 
+ *
  * @param mel_stream    The MEL byte stream state variables
  * @param Dcup          Bytes of the HT segment
- * @param Lcup          Length of the HT cleanup segment. 
- *         
- * @return int          THe next MEL bit      
+ * @param Lcup          Length of the HT cleanup segment.
+ *
+ * @return int          The next MEL bit
  */
-static int jpeg2000_import_mel_bit(StateVars *mel_stream,const uint8_t *Dcup,uint32_t Lcup);
+static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
- * Decode a jpeg2000 High throughtput bitstream
+ * @brief Retrieve VLC bits from the byte-stream
+ *
+ * @param s             A Jpeg2000 Decoder context
+ * @param vlc_stream    VLC Byte stream state variables
+ * @param Dcup          HT Cleanup Segment bytes
+ * @param Pcup          HT cleanup segment prefix length.
+ *
+ * @return int          -1 on error, (0 or 1 on success).
+ */
+static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup);
+/**
+ * @brief Decode Context for Variable Length Coding
+ *
+ *
+ * */
+static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table,
+                                   uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
+                                   uint8_t *emb_pat_1, uint32_t Pcup, uint16_t context);
+
+/**
+ * Decode a jpeg2000 High throughput bitstream
  *
  * @returns 0 on success, all other values are errors.
  * */

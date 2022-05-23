@@ -26,7 +26,7 @@
 
 #include "jpeg2000_htj2k.h"
 #include "bytestream.h"
-#include <libavutil/avassert.h>
+#include <libavutil/common.h>
 #include <libavutil/log.h>
 #include <libavutil/mem.h>
 #include <stddef.h>
@@ -36,7 +36,7 @@
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 /* Initialize State variables to zero */
-static void init_zero(StateVars *s)
+static void jpeg2000_init_zero(StateVars *s)
 {
     s->tmp = 0;
     s->bits = 0;
@@ -44,23 +44,23 @@ static void init_zero(StateVars *s)
     s->last = 0;
 }
 /*Initialize MEL bit stream*/
-static void init_mel(StateVars *s, uint32_t Pcup)
+static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
 {
-    init_zero(s);
+    jpeg2000_init_zero(s);
     s->pos = Pcup;
 }
 
-static void init_vlc(StateVars *s, uint32_t Lcup, uint8_t *Dcup)
+static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, const uint8_t *Dcup)
 {
     s->tmp = Lcup - 3;
     // Vlc_Last = modDcup(Dcup, Lcup-2)
     // which becomes  Dcup[pos] | 0x0F
-    s->last = Dcup[Lcup - 2] | 0x0F;
+    s->last = Dcup[Lcup - 2];
     s->tmp = (s->last) >> 4;
     s->bits = ((s->tmp & 7) < 7) ? 4 : 3;
 }
 
-static void init_mag_ref(StateVars *s, uint32_t Lref)
+static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
 {
     s->pos = Lref - 1;
     s->bits = 0;
@@ -82,7 +82,7 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->one = 0;
 }
 
-static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer)
+static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer,uint8_t *array,uint32_t *pos,uint32_t len)
 {
     uint64_t tmp; // temporary storage for bytes
     size_t bytes_left;
@@ -90,14 +90,19 @@ static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBu
     if (buffer->bits_left > 32) {
         return 0; // enough data, no need to pull in more bits
     }
+    bytes_left = av_sat_sub32(len,*pos);
 
-    bytes_left = bytestream2_get_bytes_left(buffer->src);
-
+    
     if (bytes_left > 4) {
-        tmp = bytestream2_get_be32u(buffer->src);
+        // dereference and assign
+        // Safety is that we know the position is in bounds
+        tmp = (uint32_t)*array;
+        *array+=4;
+        *pos+=4;
+
         buffer->bits_left += 32;
     } else if (bytes_left == 3) {
-        tmp = bytestream2_get_be24u(buffer->src);
+        tmp=0;
         buffer->bits_left += 24;
     } else if (bytes_left == 2) {
         tmp = bytestream2_get_be16u(buffer->src);
@@ -156,7 +161,7 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_st
         bit = jpeg2000_import_mel_bit(mel_stream, Dcup, Lcup);
         if (bit == 1) {
             mel_state->run = 1 << eval;
-            mel_state->k = MIN(12,mel_state->k + 1);
+            mel_state->k = MIN(12, mel_state->k + 1);
         } else {
             mel_state->run = 0;
             while (eval > 0) {
@@ -192,22 +197,59 @@ static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, u
     return (mel_stream->tmp >> mel_stream->bits) & 1;
 }
 
-static int jpeg2000_decode_sig_emb(MelDecoderState *mel_state, StateVars *mel_stream, uint8_t *Dcup, uint16_t q, uint16_t context, uint32_t Lcup)
+static void jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,StateVars *vlc_stream,
+                                    uint16_t *vlc_table,uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off,
+                                   uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
+                                   uint16_t q, uint16_t context, uint32_t Lcup,uint32_t Pcup)
 {
     uint8_t sym;
     if (context == 0) {
         sym = jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup);
         if (sym == 0) {
-            //
+            sig_pat[pos] = 0;
+            res_off[pos] = 0;
+            emb_pat_k[pos] = 0;
+            emb_pat_1[pos] = 0;
+            return ;
         }
     }
-    return 0;
+    jpeg2000_decode_ctx_vlc(s,vlc_stream,vlc_table,Dcup,sig_pat,res_off,emb_pat_k,emb_pat_1,Pcup,context);
+
+
+    return ;
 }
 
-static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, uint8_t *Dcup, uint32_t Lcup, uint32_t Scup, int width, int height)
+static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup)
+{
+    int bit;
+    if (vlc_stream->bits == 0) {
+        if (vlc_stream->pos >= Pcup)
+            vlc_stream->tmp = Dcup[vlc_stream->pos];
+        else {
+            av_log(s->avctx, AV_LOG_ERROR, "No more Variable Length bits left");
+            return -1;
+        }
+        vlc_stream->bits = 8;
+        if ((vlc_stream->last > 0x8F) && (vlc_stream->tmp & 0x7F) == 0x7F)
+            vlc_stream->bits = 7;
+        vlc_stream->last = vlc_stream->tmp;
+        vlc_stream->pos -= 1;
+    }
+    bit = (vlc_stream->tmp & 1);
+    vlc_stream->tmp >>= 1;
+    vlc_stream->bits -=1;
+    return bit;
+
+}
+
+static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, 
+                                        StateVars  *mel_stream,StateVars *vlc_stream,uint8_t *Dcup,
+                                        uint32_t Lcup, uint32_t Pcup, int width, int height)
 {
 
-    uint16_t q = 0; // Represents one quad.
+    uint16_t q = 0; // Represents current quad position.
+    uint16_t q1, q2;
+
     uint16_t context = 0;
 
     const uint16_t quad_width = ff_jpeg2000_ceildivpow2(width, 1);
@@ -221,7 +263,18 @@ static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *c
         av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for sigma_n buffer", buf_size);
         goto error;
     }
+    uint8_t sig_pat[2];   // significance pattern
+    uint8_t res_off[2];   // residual offset
+    uint8_t emb_pat_k[2]; // Exponent Max Bound pattern K
+    uint8_t emb_pat_1[2]; // Exponent Max Bound pattern 1.
+    uint16_t *vlc_table;
     while (q < quad_width - 1) {
+        q1 = q;
+        q2 = q1+1;
+
+        jpeg2000_decode_sig_emb(s,mel_state,mel_stream,vlc_stream,vlc_table,Dcup,sig_pat,res_off,emb_pat_k,emb_pat_1,0,q,context,Lcup,Pcup);
+        // move to the next quad pair
+        q+=2;
     }
 
     av_freep(sigma_n);
@@ -231,6 +284,19 @@ error:
     av_freep(sigma_n);
     return 1;
 }
+
+static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream,uint16_t 
+                                    *table,uint8_t *Dcup, uint8_t *sig_pat,uint8_t *res_off, 
+                                    uint8_t *emb_pat_k, uint8_t *emb_pat_1,uint32_t Pcup,uint16_t context)
+{
+    uint8_t len = 1;
+    int code_word = jpeg2000_import_vlc_bit(s,vlc_stream,Dcup,Pcup);
+    if (code_word==-1)
+        return -1;
+    
+    return 0;
+}
+
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
@@ -257,10 +323,11 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     StateVars sig_prop; // Significance propagation
     StateVars mag_ref;  // Magnitude and refinement.
 
+    MelDecoderState mel_state;
+
     if (cblk->npasses == 0) {
         return 0;
     }
-    av_log(s->avctx, AV_LOG_TRACE, "Initializing HTJ2K decoder\n");
 
     if (cblk->npasses > 3)
         // TODO:(cae) Add correct support for this
@@ -299,15 +366,17 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     Dcup[Lcup - 1] = 0xFF;
     Dcup[Lcup - 2] |= 0x0F;
 
-    init_zero(&mag_sgn);
-    init_zero(&sig_prop);
+    jpeg2000_init_zero(&mag_sgn);
+    jpeg2000_init_zero(&sig_prop);
 
-    init_mel(&mel, Pcup);
-    init_vlc(&vlc, Lcup, Dcup);
+    jpeg2000_init_mel(&mel, Pcup);
+    jpeg2000_init_vlc(&vlc, Lcup, Dcup);
 
-    init_mag_ref(&mag_ref, Lref);
+    jpeg2000_init_mag_ref(&mag_ref, Lref);
 
-    jpeg2000_decode_ht_cleanup(s, cblk, Dcup, Lcup, Scup, width, height);
+    jpeg2000_init_mel_decoder(&mel_state);
+
+    jpeg2000_decode_ht_cleanup(s, cblk,&mel_state,&mel,&vlc, Dcup, Lcup, Pcup, width, height);
 
     return 1;
 }
