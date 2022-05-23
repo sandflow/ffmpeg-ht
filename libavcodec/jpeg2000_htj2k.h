@@ -59,7 +59,7 @@ typedef struct MelDecoderState {
 /**
  * @brief Table 2 in clause 7.3.3
  * */
-const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
+const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
 /**
  * Determine if a word has a zero byte
@@ -68,7 +68,7 @@ const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  *
  * @returns 0 if the dword has no zero 1 otherwise
  * */
-static uint32_t has_zero(uint32_t dword)
+ static uint32_t has_zero(uint32_t dword)
 {
     // Borrowed from the famous stanford bithacks page
     // see https://graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
@@ -82,7 +82,7 @@ static uint32_t has_zero(uint32_t dword)
  *
  * @returns zero if the dword doesn't contain `bytes`, 1 otherwise.
  * */
-static uint32_t has_byte(uint32_t dword, uint8_t byte)
+ static uint32_t has_byte(uint32_t dword, uint8_t byte)
 {
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
@@ -93,7 +93,7 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
  * @param buffer A struct containing BitStream variables
  * @param b The byte buffer we will be extracting bits from.
  */
-static void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
+ void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
 
 /**
  * Refill the bit buffer with new bytes unstuffing bits if needed
@@ -102,7 +102,7 @@ static void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b
  * @param buffer THe current bit-buffer where we are adding new bits
  *
  * */
-static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer, uint8_t *array, uint32_t *pos, uint32_t len);
+ int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer, uint8_t *array, uint32_t *pos, uint32_t len);
 
 /**
  * Entry point for Cleanup segment decoding
@@ -119,7 +119,7 @@ static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBu
  * @param height        Height of the code block
  *
  * */
-static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state,
+ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state,
                                       StateVars *mel_stream, StateVars *vlc_stream, uint8_t *Dcup,
                                       uint32_t Lcup, uint32_t Pcup, int width, int height);
 
@@ -147,7 +147,7 @@ static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *c
  *
  * @returns  -1 on error.
  */
-static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
+ int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
                                     StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat,
                                     uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
                                     uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
@@ -159,7 +159,7 @@ static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *m
  *
  * @param mel_state  An allocated but uninitialized MEL decoder
  */
-static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
+ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 
 /**
  * @brief Decode an adaptive run length symbol
@@ -171,7 +171,7 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  *
  * @return int
  */
-static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const uint8_t *Dcup, uint32_t Lcup);
+ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
  * @brief Recover Adaptive run length bits from the byte stream
@@ -182,7 +182,7 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, c
  *
  * @return int          The next MEL bit
  */
-static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
+ int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
  * @brief Retrieve VLC bits from the byte-stream
@@ -194,7 +194,7 @@ static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, u
  *
  * @return int          -1 on error, (0 or 1 on success).
  */
-static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup);
+ int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup);
 /**
  * @brief Decode Context for Variable Length Coding
  *
@@ -210,7 +210,7 @@ static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_str
  * @param Pcup          Length of Prefix Segment
  * @param context       Significance of a set of neighbouring samples
  * */
-static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table,
+ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table,
                                    uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
                                    uint8_t *emb_pat_1,uint8_t  pos, uint32_t Pcup, uint16_t context);
 
