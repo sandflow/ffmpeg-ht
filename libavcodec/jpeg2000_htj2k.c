@@ -196,7 +196,7 @@ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, c
     return (mel_stream->tmp >> mel_stream->bits) & 1;
 }
 
- int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup)
+ int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup)
 {
     uint8_t sym;
     if (context == 0) {
@@ -235,11 +235,17 @@ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, c
     return bit;
 }
 
- int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height)
+ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height)
 {
 
     uint16_t q = 0; // Represents current quad position.
     uint16_t q1, q2;
+
+    uint8_t sig_pat[2];   // significance pattern
+    uint8_t res_off[2];   // residual offset
+    uint8_t emb_pat_k[2]; // Exponent Max Bound pattern K
+    uint8_t emb_pat_1[2]; // Exponent Max Bound pattern 1.
+    const uint16_t *vlc_table;
 
     uint16_t context = 0;
 
@@ -254,14 +260,9 @@ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, c
         av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for sigma_n buffer", buf_size);
         goto error;
     }
-    uint8_t sig_pat[2];   // significance pattern
-    uint8_t res_off[2];   // residual offset
-    uint8_t emb_pat_k[2]; // Exponent Max Bound pattern K
-    uint8_t emb_pat_1[2]; // Exponent Max Bound pattern 1.
-    uint16_t *vlc_table;
     while (q < quad_width - 1) {
-        q1 = q;
-        q2 = q1 + 1;
+        //        q1 = q;
+        //        q2 = q1 + 1;
         // if (q < QW) -> table=CtxVLC_table_0
         vlc_table = dec_CxtVLC_table0;
         if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, 0, q, context, Lcup, Pcup)==-1)
@@ -280,18 +281,19 @@ error:
     return 1;
 }
 
- int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table, uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
+ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
 {
-    uint32_t len = 1;
+    uint32_t value;
+    int index;
     int code_word = jpeg2000_import_vlc_bit(s, vlc_stream, Dcup, Pcup);
     if (code_word == -1)
         return -1;
-    int index = code_word + (context << 7);
+    index = code_word + (context << 7);
     // decode table has 1024 entries so ensure array access is in bounds
     av_assert0(index < 1024);
 
     // TODO:(cae) Confirm this works ,I should cc osamu to ask what's happening here.
-    uint16_t value = table[index];
+    value = table[index];
 
     sig_pat[pos] = (uint8_t)(value & 1);
     res_off[pos] = (uint8_t)((value & 0x00F0) >> 4);

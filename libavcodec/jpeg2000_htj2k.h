@@ -120,7 +120,7 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  *
  * */
  int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state,
-                                      StateVars *mel_stream, StateVars *vlc_stream, uint8_t *Dcup,
+                                      StateVars *mel_stream, StateVars *vlc_stream,const uint8_t *Dcup,
                                       uint32_t Lcup, uint32_t Pcup, int width, int height);
 
 /**
@@ -148,7 +148,7 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  * @returns  -1 on error.
  */
  int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
-                                    StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat,
+                                    StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat,
                                     uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
                                     uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
 
@@ -210,8 +210,8 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  * @param Pcup          Length of Prefix Segment
  * @param context       Significance of a set of neighbouring samples
  * */
- int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table,
-                                   uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
+ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table,
+                                   const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
                                    uint8_t *emb_pat_1,uint8_t  pos, uint32_t Pcup, uint16_t context);
 
 /**
