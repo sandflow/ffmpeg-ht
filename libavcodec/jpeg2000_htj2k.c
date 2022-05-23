@@ -82,7 +82,7 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->one = 0;
 }
 
-static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer,uint8_t *array,uint32_t *pos,uint32_t len)
+static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer, uint8_t *array, uint32_t *pos, uint32_t len)
 {
     uint64_t tmp; // temporary storage for bytes
     size_t bytes_left;
@@ -90,19 +90,18 @@ static int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBu
     if (buffer->bits_left > 32) {
         return 0; // enough data, no need to pull in more bits
     }
-    bytes_left = av_sat_sub32(len,*pos);
+    bytes_left = av_sat_sub32(len, *pos);
 
-    
     if (bytes_left > 4) {
         // dereference and assign
         // Safety is that we know the position is in bounds
         tmp = (uint32_t)*array;
-        *array+=4;
-        *pos+=4;
+        *array += 4;
+        *pos += 4;
 
         buffer->bits_left += 32;
     } else if (bytes_left == 3) {
-        tmp=0;
+        tmp = 0;
         buffer->bits_left += 24;
     } else if (bytes_left == 2) {
         tmp = bytestream2_get_be16u(buffer->src);
@@ -197,10 +196,7 @@ static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, u
     return (mel_stream->tmp >> mel_stream->bits) & 1;
 }
 
-static void jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,StateVars *vlc_stream,
-                                    uint16_t *vlc_table,uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off,
-                                   uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
-                                   uint16_t q, uint16_t context, uint32_t Lcup,uint32_t Pcup)
+static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup)
 {
     uint8_t sym;
     if (context == 0) {
@@ -210,13 +206,11 @@ static void jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *
             res_off[pos] = 0;
             emb_pat_k[pos] = 0;
             emb_pat_1[pos] = 0;
-            return ;
+            return 0;
         }
     }
-    jpeg2000_decode_ctx_vlc(s,vlc_stream,vlc_table,Dcup,sig_pat,res_off,emb_pat_k,emb_pat_1,Pcup,context);
+    return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1,pos, Pcup, context);
 
-
-    return ;
 }
 
 static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup)
@@ -237,14 +231,11 @@ static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_str
     }
     bit = (vlc_stream->tmp & 1);
     vlc_stream->tmp >>= 1;
-    vlc_stream->bits -=1;
+    vlc_stream->bits -= 1;
     return bit;
-
 }
 
-static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, 
-                                        StateVars  *mel_stream,StateVars *vlc_stream,uint8_t *Dcup,
-                                        uint32_t Lcup, uint32_t Pcup, int width, int height)
+static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height)
 {
 
     uint16_t q = 0; // Represents current quad position.
@@ -270,11 +261,15 @@ static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *c
     uint16_t *vlc_table;
     while (q < quad_width - 1) {
         q1 = q;
-        q2 = q1+1;
-
-        jpeg2000_decode_sig_emb(s,mel_state,mel_stream,vlc_stream,vlc_table,Dcup,sig_pat,res_off,emb_pat_k,emb_pat_1,0,q,context,Lcup,Pcup);
+        q2 = q1 + 1;
+        // if (q < QW) -> table=CtxVLC_table_0
+        vlc_table = dec_CxtVLC_table0;
+        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, 0, q, context, Lcup, Pcup)==-1)
+            // something went wrong, lets error out
+            goto error;
+        ;
         // move to the next quad pair
-        q+=2;
+        q += 2;
     }
 
     av_freep(sigma_n);
@@ -285,18 +280,26 @@ error:
     return 1;
 }
 
-static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream,uint16_t 
-                                    *table,uint8_t *Dcup, uint8_t *sig_pat,uint8_t *res_off, 
-                                    uint8_t *emb_pat_k, uint8_t *emb_pat_1,uint32_t Pcup,uint16_t context)
+static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table, uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
 {
-    uint8_t len = 1;
-    int code_word = jpeg2000_import_vlc_bit(s,vlc_stream,Dcup,Pcup);
-    if (code_word==-1)
+    uint32_t len = 1;
+    int code_word = jpeg2000_import_vlc_bit(s, vlc_stream, Dcup, Pcup);
+    if (code_word == -1)
         return -1;
-    
+    int index = code_word + (context << 7);
+    // decode table has 1024 entries so ensure array access is in bounds
+    av_assert0(index < 1024);
+
+    // TODO:(cae) Confirm this works ,I should cc osamu to ask what's happening here.
+    uint16_t value = table[index];
+
+    sig_pat[pos] = (uint8_t)(value & 1);
+    res_off[pos] = (uint8_t)((value & 0x00F0) >> 4);
+    emb_pat_1[pos] = (uint8_t)((value & 0x0F00) >> 8);
+    emb_pat_1[pos] = (uint8_t)((value & 0xF000) >> 12);
+
     return 0;
 }
-
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
@@ -376,7 +379,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel_decoder(&mel_state);
 
-    jpeg2000_decode_ht_cleanup(s, cblk,&mel_state,&mel,&vlc, Dcup, Lcup, Pcup, width, height);
+    jpeg2000_decode_ht_cleanup(s, cblk, &mel_state, &mel, &vlc, Dcup, Lcup, Pcup, width, height);
 
     return 1;
 }

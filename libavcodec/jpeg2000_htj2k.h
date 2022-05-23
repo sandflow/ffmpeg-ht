@@ -144,8 +144,10 @@ static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *c
  * @param pos           Position to write values in the above 4 parameters
  * @param Lcup          Length of the HT cleanup segment.
  * @param Pcup          HT cleanup segment prefix length.
+ *
+ * @returns  -1 on error.
  */
-static void jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
+static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
                                     StateVars *vlc_stream, uint16_t *vlc_table, uint8_t *Dcup, uint8_t *sig_pat,
                                     uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
                                     uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
@@ -196,11 +198,21 @@ static int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_str
 /**
  * @brief Decode Context for Variable Length Coding
  *
- *
+ * @param s             A jpeg Decoder context
+ * @param vlc_stream    State variables for VLC bit-stream
+ * @param table         CtcVlC decoder tables described in Annex C
+ * @param Dcup          Bytes of the HT cleanup segment
+ * @param sig_pat       Significance pattern  ρq
+ * @param res_off       Unsigned residual offset  uqoff
+ * @param emb_pat_k     Exponent Magnitude Pattern.
+ * @param emb_pat_1     Exponent Magnitude Pattern.
+ * @param pos           Position to write values in the above 4 parameters
+ * @param Pcup          Length of Prefix Segment
+ * @param context       Significance of a set of neighbouring samples
  * */
 static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, uint16_t *table,
                                    uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
-                                   uint8_t *emb_pat_1, uint32_t Pcup, uint16_t context);
+                                   uint8_t *emb_pat_1,uint8_t  pos, uint32_t Pcup, uint16_t context);
 
 /**
  * Decode a jpeg2000 High throughput bitstream
