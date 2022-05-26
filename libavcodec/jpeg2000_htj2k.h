@@ -29,12 +29,6 @@
 
 #include "bytestream.h"
 
-typedef struct Jpeg2000ByteBuffer {
-    uint8_t bits_left;   // number of bits remaining in the byte buffer
-    uint64_t bit_buf;    // actual byte buffer
-    GetByteContext *src; // source from which we pull our data from
-} Jpeg2000ByteBuffer;
-
 /**
  * @brief State Machine variables for block decoding
  *
@@ -44,7 +38,11 @@ typedef struct StateVars {
     uint32_t bits;
     uint32_t tmp;
     uint32_t last;
-
+    
+    uint8_t bits_left;   // number of bits remaining in the byte buffer
+    uint64_t bit_buf; 
+    
+    
 } StateVars;
 /**
  * @brief Adaptive run length decoding algorithm
@@ -87,13 +85,6 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
 
-/**
- * @brief Initialize BitStream decoder
- *
- * @param buffer A struct containing BitStream variables
- * @param b The byte buffer we will be extracting bits from.
- */
- void jpeg2000_init_byte_buf(Jpeg2000ByteBuffer *buffer, GetByteContext *b);
 
 /**
  * Refill the bit buffer with new bytes unstuffing bits if needed
@@ -102,8 +93,9 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  * @param buffer THe current bit-buffer where we are adding new bits
  *
  * */
- int jpeg2000_refill_and_unsfuff(Jpeg2000DecoderContext *s, Jpeg2000ByteBuffer *buffer, uint8_t *array, uint32_t *pos, uint32_t len);
+int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array, uint32_t pos, uint32_t len);
 
+void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
  * Entry point for Cleanup segment decoding
  *
@@ -152,14 +144,6 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
                                     uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
                                     uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
 
-/**
- * @brief Initialize the mel decoder by zeroing all its variables
- *
- *  Described in Clause 7.1.3
- *
- * @param mel_state  An allocated but uninitialized MEL decoder
- */
- void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 
 /**
  * @brief Decode an adaptive run length symbol
@@ -200,7 +184,7 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  *
  * @param s             A jpeg Decoder context
  * @param vlc_stream    State variables for VLC bit-stream
- * @param table         CtcVlC decoder tables described in Annex C
+ * @param table         CtxVlC decoder tables described in Annex C
  * @param Dcup          Bytes of the HT cleanup segment
  * @param sig_pat       Significance pattern  ρq
  * @param res_off       Unsigned residual offset  uqoff
