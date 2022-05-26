@@ -38,11 +38,10 @@ typedef struct StateVars {
     uint32_t bits;
     uint32_t tmp;
     uint32_t last;
-    
-    uint8_t bits_left;   // number of bits remaining in the byte buffer
-    uint64_t bit_buf; 
-    
-    
+
+    uint8_t bits_left; // number of bits remaining in the byte buffer
+    uint64_t bit_buf;
+
 } StateVars;
 /**
  * @brief Adaptive run length decoding algorithm
@@ -57,7 +56,7 @@ typedef struct MelDecoderState {
 /**
  * @brief Table 2 in clause 7.3.3
  * */
-const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
+const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
 /**
  * Determine if a word has a zero byte
@@ -66,7 +65,7 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  *
  * @returns 0 if the dword has no zero 1 otherwise
  * */
- static uint32_t has_zero(uint32_t dword)
+static uint32_t has_zero(uint32_t dword)
 {
     // Borrowed from the famous stanford bithacks page
     // see https://graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
@@ -80,11 +79,10 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  *
  * @returns zero if the dword doesn't contain `bytes`, 1 otherwise.
  * */
- static uint32_t has_byte(uint32_t dword, uint8_t byte)
+static uint32_t has_byte(uint32_t dword, uint8_t byte)
 {
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
-
 
 /**
  * Refill the bit buffer with new bytes unstuffing bits if needed
@@ -93,7 +91,7 @@ const  static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
  * @param buffer THe current bit-buffer where we are adding new bits
  *
  * */
-int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array, uint32_t pos, uint32_t len);
+int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array);
 
 void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
@@ -111,9 +109,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param height        Height of the code block
  *
  * */
- int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state,
-                                      StateVars *mel_stream, StateVars *vlc_stream,const uint8_t *Dcup,
-                                      uint32_t Lcup, uint32_t Pcup, int width, int height);
+int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height);
 
 /**
  * @brief Decode significance and EMB patterns
@@ -139,11 +135,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  *
  * @returns  -1 on error.
  */
- int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream,
-                                    StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat,
-                                    uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,
-                                    uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
-
+int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
 
 /**
  * @brief Decode an adaptive run length symbol
@@ -155,7 +147,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  *
  * @return int
  */
- int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const uint8_t *Dcup, uint32_t Lcup);
+int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
  * @brief Recover Adaptive run length bits from the byte stream
@@ -166,7 +158,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  *
  * @return int          The next MEL bit
  */
- int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
+int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
  * @brief Retrieve VLC bits from the byte-stream
@@ -178,7 +170,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  *
  * @return int          -1 on error, (0 or 1 on success).
  */
- int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup);
+int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup);
 /**
  * @brief Decode Context for Variable Length Coding
  *
@@ -194,9 +186,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param Pcup          Length of Prefix Segment
  * @param context       Significance of a set of neighbouring samples
  * */
- int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table,
-                                   const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
-                                   uint8_t *emb_pat_1,uint8_t  pos, uint32_t Pcup, uint16_t context);
+int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context);
 
 /**
  * Decode a jpeg2000 High throughput bitstream
@@ -205,12 +195,9 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * */
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift);
 
-
-
-
 /**
  * @brief  CtxVLC tables, borrowed from openhtj2k (https://github.com/osamu620/OpenHTJ2K) (credits to Osamu Watanabe)
- * 
+ *
  */
 static const uint16_t dec_CxtVLC_table1[1024] = {
     0x0016, 0x006A, 0x0046, 0x00DD, 0x0086, 0x888B, 0x0026, 0x444D, 0x0016, 0x00AA, 0x0046, 0x88AD, 0x0086,

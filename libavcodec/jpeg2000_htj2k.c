@@ -56,7 +56,6 @@ static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
 
 static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup, const uint8_t *Dcup)
 {
-
     s->bits_left = 0;
     s->bit_buf = 0;
     s->pos = Lcup - 2 - Pcup;
@@ -80,42 +79,41 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->one = 0;
 }
 
-int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array, uint32_t pos, uint32_t len)
+int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array)
 {
-    uint64_t tmp;
-    size_t bytes_left;
-    uint32_t position = pos + 1;
+    uint64_t tmp = 0;
+    int32_t position = buffer->pos;
+    int new_bits = 32;
 
+    // TODO: (cae), confirm if we need to swap in BE systems.
     if (buffer->bits_left > 32)
         return 0; // enough data, no need to pull in more bits
-    tmp = 0;
-    bytes_left = av_sat_sub32(len, position);
-
-    if (bytes_left > 3) {
+    if (position >= 3) {
         position -= 4;
-        memcpy(&tmp, array + position, 4);
-        buffer->bits_left += 32;
-    } else if (bytes_left == 3) {
-        position -= 3;
-        memcpy(&tmp, array + position, 3);
-        buffer->bits_left += 24;
-    } else if (bytes_left == 2) {
-        position -= 2;
-        memcpy(&tmp, array + position, 2);
+        memcpy(&tmp, array + position + 1, 4);
+        tmp = (uint64_t)av_bswap32((uint32_t)tmp);
+    } else if (position == 2) {
+        position = 0;
+        memcpy(&tmp, array + position + 1, 3);
+        tmp = (uint64_t)av_bswap32((uint32_t)tmp);
+        new_bits -= 8;
+    } else if (position == 1) {
+        position = 0;
+        memcpy(&tmp, array + position + 1, 2);
+        tmp = (uint64_t)av_bswap16((uint16_t)tmp);
         buffer->bits_left += 16;
-    } else if (bytes_left == 1) {
-        position -= 1;
-        memcpy(&tmp, array + position, 1);
+        new_bits -= 16;
+    } else if (position == 0) {
+        position = -1;
+        memcpy(&tmp, array + position + 1, 1);
         buffer->bits_left += 8;
+        new_bits -= 24;
     } else {
         printf("No bytes left");
         return 1;
     }
-    // swap bytes from LE to BE.
-    tmp = (uint64_t)av_bswap32((uint32_t)tmp);
     // check for stuff bytes (0xff)
     if (has_byte(tmp, 0xff)) {
-
         // borrowed from open_htj2k ht_block_decoding.cpp
 
         // Load the next byte to check for stuffing.
@@ -123,25 +121,27 @@ int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array, uint32_
         tmp |= (uint64_t) * (array + position);
         if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
             tmp &= 0x7FFFFFFFFF;
-            buffer->bits_left--;
+            new_bits--;
         }
         if ((tmp & 0x007FFF0000) > 0x007F8F0000) {
             tmp = (tmp & 0x007FFFFFFF) + ((tmp & 0xFF00000000) >> 1);
-            buffer->bits_left--;
+            new_bits--;
         }
         if ((tmp & 0x00007FFF00) > 0x00007F8F00) {
             tmp = (tmp & 0x00007FFFFF) + ((tmp & 0xFFFF000000) >> 1);
-            buffer->bits_left--;
+            new_bits--;
         }
         if ((tmp & 0x0000007FFF) > 0x0000007F8F) {
             tmp = (tmp & 0x0000007FFF) + ((tmp & 0xFFFFFF0000) >> 1);
-            buffer->bits_left--;
+            new_bits--;
         }
         // remove temporary byte loaded.
         tmp >>= 8;
     }
     // Add bits to the MSB of the bit buffer
-    buffer->bit_buf |= (uint64_t)tmp << (64 - buffer->bits_left);
+    buffer->bit_buf |= tmp << buffer->bits_left;
+    buffer->bits_left += new_bits;
+    buffer->pos = position;
     return 0;
 }
 
@@ -211,7 +211,7 @@ int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_stat
 int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup)
 {
     int bit;
-    jpeg2000_refill_and_unsfuff(vlc_stream, Dcup + Pcup, vlc_stream->pos, Pcup);
+    jpeg2000_refill_and_unsfuff(vlc_stream, Dcup + Pcup);
 
     if (vlc_stream->bits == 0) {
         if (vlc_stream->pos >= Pcup)
@@ -258,12 +258,20 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         goto error;
     }
     while (q < quad_width - 1) {
-        //        q1 = q;
-        //        q2 = q1 + 1;
+        q1 = q;
+        q2 = q1 + 1;
         // if (q < QW) -> table=CtxVLC_table_0
         vlc_table = dec_CxtVLC_table0;
         if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, 0, q, context, Lcup, Pcup) == -1)
             goto error;
+        for (int i = 0; i < 4; i++) {
+            sigma_n[4 * q1 + i] = (sig_pat[0] >> i) & 1;
+        }
+        // calculate context
+        context = sigma_n[4 * q1];            // f
+        context |= sigma_n[4 * q1 + 1];       // sf
+        context += sigma_n[4 * q1 + 2] << 1;  // w << 1
+        context += sigma_n[4 * q1 + 3] << 2;
 
         exit(1);
         // prepare context for the next quad
@@ -284,20 +292,17 @@ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
 {
     uint32_t value;
     int index;
-    int code_word = jpeg2000_import_vlc_bit(s, vlc_stream, Dcup, Pcup);
-    if (code_word == -1)
-        return -1;
+    int code_word = vlc_stream->bit_buf & 0x7f;
+
     index = code_word + (context << 7);
     // decode table has 1024 entries so ensure array access is in bounds
     av_assert0(index < 1024);
 
-    // TODO:(cae) Confirm this works ,I should cc osamu to ask what's happening here.
     value = table[index];
-
-    sig_pat[pos] = (uint8_t)(value & 1);
-    res_off[pos] = (uint8_t)((value & 0x00F0) >> 4);
-    emb_pat_1[pos] = (uint8_t)((value & 0x0F00) >> 8);
-    emb_pat_k[pos] = (uint8_t)((value & 0xF000) >> 12);
+    res_off[pos] = (uint8_t)(value & 1);
+    sig_pat[pos] = (uint8_t)((value & 0x00F0) >> 4);
+    emb_pat_k[pos] = (uint8_t)((value & 0x0F00) >> 8);
+    emb_pat_1[pos] = (uint8_t)((value & 0xF000) >> 12);
 
     return 0;
 }
@@ -310,10 +315,10 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
      *
      * */
     uint8_t p0 = 0;    // Number of placeholder passes.
-    uint32_t Lcup; // Length of HT cleanup segment.
+    uint32_t Lcup;     // Length of HT cleanup segment.
     uint32_t Lref = 0; // Length of Refinement segment.
-    uint32_t Scup; // HT cleanup segment suffix length.
-    uint32_t Pcup; // HT cleanup segment prefix length.
+    uint32_t Scup;     // HT cleanup segment suffix length.
+    uint32_t Pcup;     // HT cleanup segment prefix length.
 
     uint8_t *Dcup; // Byte of an HT cleanup segment.
     uint8_t *Dref; // Byte of an HT refinement segment.
@@ -377,6 +382,10 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel(&mel, Pcup);
     jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
+
+    jpeg2000_refill_and_unsfuff(&vlc, Dcup + Pcup);
+    vlc.bit_buf >>= 4;
+    vlc.bits_left -= 4;
 
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
