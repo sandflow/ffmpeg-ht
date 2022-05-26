@@ -79,7 +79,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->one = 0;
 }
 
-int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array)
+int jpeg2000_bitbuf_refill(StateVars *buffer, const uint8_t *array)
 {
     uint64_t tmp = 0;
     int32_t position = buffer->pos;
@@ -143,6 +143,12 @@ int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array)
     buffer->bits_left += new_bits;
     buffer->pos = position;
     return 0;
+}
+void jpeg2000_bitbuf_drop(StateVars *buf, uint8_t nbits)
+{
+    av_assert0(buf->bits_left >= nbits);
+    buf->bit_buf >>= nbits;
+    buf->bits_left -= nbits;
 }
 
 int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
@@ -208,30 +214,6 @@ int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_stat
     return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, pos, Pcup, context);
 }
 
-int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Pcup)
-{
-    int bit;
-    jpeg2000_refill_and_unsfuff(vlc_stream, Dcup + Pcup);
-
-    if (vlc_stream->bits == 0) {
-        if (vlc_stream->pos >= Pcup)
-            vlc_stream->tmp = Dcup[vlc_stream->pos];
-        else {
-            av_log(s->avctx, AV_LOG_ERROR, "No more Variable Length bits left");
-            return -1;
-        }
-        vlc_stream->bits = 8;
-        if ((vlc_stream->last > 0x8F) && (vlc_stream->tmp & 0x7F) == 0x7F)
-            vlc_stream->bits = 7;
-        vlc_stream->last = vlc_stream->tmp;
-        vlc_stream->pos -= 1;
-    }
-    bit = (vlc_stream->tmp & 1);
-    vlc_stream->tmp >>= 1;
-    vlc_stream->bits -= 1;
-    return bit;
-}
-
 int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height)
 {
 
@@ -268,11 +250,30 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
             sigma_n[4 * q1 + i] = (sig_pat[0] >> i) & 1;
         }
         // calculate context
-        context = sigma_n[4 * q1];            // f
-        context |= sigma_n[4 * q1 + 1];       // sf
-        context += sigma_n[4 * q1 + 2] << 1;  // w << 1
+        context = sigma_n[4 * q1];           // f
+        context |= sigma_n[4 * q1 + 1];      // sf
+        context += sigma_n[4 * q1 + 2] << 1; // w << 1
         context += sigma_n[4 * q1 + 3] << 2;
 
+
+        for (int i = 0; i < 4; i++) {
+            sigma_n[4 * q1 + i] = (sig_pat[0] >> i) & 1;
+        }
+        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, 1, q, context, Lcup, Pcup) == -1)
+            goto error;
+
+        for (int i = 0; i < 4; i++) {
+            sigma_n[4 * q2 + i] = (sig_pat[1] >> i) & 1;
+        }
+        // calculate context for the next quad
+        context = sigma_n[4 * q2];           // f
+        context |= sigma_n[4 * q2 + 1];      // sf
+        context += sigma_n[4 * q2 + 2] << 1; // w << 1
+        context += sigma_n[4 * q2 + 3] << 2; // sw << 2
+
+        for (int i = 0; i < 4; i++) {
+            sigma_n[4 * q2 + i] = (sig_pat[1] >> i) & 1;
+        }
         exit(1);
         // prepare context for the next quad
 
@@ -291,18 +292,26 @@ error:
 int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
 {
     uint32_t value;
+    uint8_t len;
     int index;
-    int code_word = vlc_stream->bit_buf & 0x7f;
 
+    jpeg2000_bitbuf_refill(vlc_stream, Dcup + Pcup);
+
+    int code_word = vlc_stream->bit_buf & 0x7f;
     index = code_word + (context << 7);
+
     // decode table has 1024 entries so ensure array access is in bounds
     av_assert0(index < 1024);
 
     value = table[index];
+    len = (value & 0x000F) >> 1;
+
     res_off[pos] = (uint8_t)(value & 1);
     sig_pat[pos] = (uint8_t)((value & 0x00F0) >> 4);
     emb_pat_k[pos] = (uint8_t)((value & 0x0F00) >> 8);
     emb_pat_1[pos] = (uint8_t)((value & 0xF000) >> 12);
+
+    jpeg2000_bitbuf_drop(vlc_stream, len);
 
     return 0;
 }
@@ -383,9 +392,8 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mel(&mel, Pcup);
     jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
 
-    jpeg2000_refill_and_unsfuff(&vlc, Dcup + Pcup);
-    vlc.bit_buf >>= 4;
-    vlc.bits_left -= 4;
+    jpeg2000_bitbuf_refill(&vlc, Dcup + Pcup);
+    jpeg2000_bitbuf_drop(&vlc,4);
 
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
