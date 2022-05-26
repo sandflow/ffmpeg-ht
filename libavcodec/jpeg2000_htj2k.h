@@ -91,7 +91,14 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
  * @param buffer THe current bit-buffer where we are adding new bits
  *
  * */
-int jpeg2000_refill_and_unsfuff(StateVars *buffer, const uint8_t *array);
+int jpeg2000_bitbuf_refill(StateVars *buffer, const uint8_t *array);
+/**
+ * @brief Drops bits from the bit buffer
+ *
+ * @param buf: Struct containing bit buffers
+ * @param nbits: Number of bits to remove.
+ * */
+void jpeg2000_bitbuf_drop(StateVars *buf, uint8_t nbits);
 
 void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
