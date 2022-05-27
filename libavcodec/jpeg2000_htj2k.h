@@ -192,6 +192,21 @@ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const ui
 int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
 
 /**
+ * @brief Decode Variable Suffix Length
+ *
+ * @param vlc_stream    VLC bit-stream
+ * @param prefix
+ * @param refill_array  The array to pull more bytes in case the bit-stream doesn't have enough bits.
+ **/
+uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t prefix, const uint8_t *refill_array);
+/**
+ * @brief Decode Variable Prefix Length
+ * @param vlc_stream    VLC bit-stream
+ * @param refill_array  The array to pull more bytes in case the bit-stream doesn't have enough bits.
+ **/
+uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array);
+
+/**
  * @brief Retrieve VLC bits from the byte-stream
  *
  * @param s             A Jpeg2000 Decoder context
