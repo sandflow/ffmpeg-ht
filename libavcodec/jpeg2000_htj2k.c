@@ -326,12 +326,19 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
     uint8_t emb_pat_k[2]; // Exponent Max Bound pattern K
     uint8_t emb_pat_1[2]; // Exponent Max Bound pattern 1.
 
-    uint8_t u_prefix[2];
-    uint8_t u_suffix[2];
-    uint8_t u_extension[2];
+    uint8_t u_pfx[2];
+    uint8_t u_sfx[2];
+    uint8_t u_ext[2];
+    int32_t u[2];
+
+    int32_t U[2];
+
+    int32_t m[2][4];
+
+    uint8_t kappa[2] = {1, 1};
 
     const uint16_t *vlc_table;
-
+    const uint8_t *vlc_buf = Dcup + Pcup;
     uint16_t context = 0;
 
     const uint16_t quad_width = ff_jpeg2000_ceildivpow2(width, 1);
@@ -350,11 +357,11 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         q2 = q1 + 1;
         // if (q < QW) -> table=CtxVLC_table_0
         vlc_table = dec_CxtVLC_table0;
-        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_FIRST_QUAD, q, context, Lcup, Pcup) == -1)
+        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q1, q, context, Lcup, Pcup) == -1)
             goto error;
 
         for (int i = 0; i < 4; i++)
-            sigma_n[4 * q1 + i] = (sig_pat[J2K_FIRST_QUAD] >> i) & 1;
+            sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
 
         // calculate context
         context = sigma_n[4 * q1];           // f
@@ -362,11 +369,11 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         context += sigma_n[4 * q1 + 2] << 1; // w << 1
         context += sigma_n[4 * q1 + 3] << 2;
 
-        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_SECOND_QUAD, q, context, Lcup, Pcup) == -1)
+        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q2, q, context, Lcup, Pcup) == -1)
             goto error;
 
         for (int i = 0; i < 4; i++)
-            sigma_n[4 * q2 + i] = (sig_pat[J2K_SECOND_QUAD] >> i) & 1;
+            sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
 
         // calculate context for the next quad
         context = sigma_n[4 * q2];           // f
@@ -374,34 +381,81 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         context += sigma_n[4 * q2 + 2] << 1; // w << 1
         context += sigma_n[4 * q2 + 3] << 2; // sw << 2
 
-        if (res_off[J2K_FIRST_QUAD] == 1 && res_off[J2K_SECOND_QUAD] == 1) {
+        if (res_off[J2K_Q1] == 1 && res_off[J2K_Q2] == 1) {
+            // max bits needed before refilling
+            // 6 -> 3 bits per each vlc_decode_u_prefix() ( 2 instances)
+            // 10 -> 5 bits per each vlc_decode_u_suffix() ( 2 instances)
+            // 8  -> 4 bits per each vlc_decode_u_extension ( 2 instances ) (might be 3 confirm)
+            //
+            // TODO :(cae) might optimize this to remove refill checks inside vlc_decode_u_prefix/suffix if need be.
+            //
+            if (vlc_stream->bits_left < 26)
+                jpeg2000_bitbuf_refill_backwards(vlc_stream, vlc_buf);
+
             if (jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup) == 1) {
-                printf("MEL DECODER HERE\n");
-                // max bits needed before refilling
-                // 6 -> 3 bits per each vlc_decode_u_prefix() ( 2 instances)
-                // 10 -> 5 bits per each vlc_decode_u_suffix() ( 2 instances)
-                // 8  -> 4 bits per each vlc_decode_u_extension ( 2 instances ) (might be 3 confirm)
-                //
-                // TODO :(cae) might optimize this to remove refill checks inside vlc_decode_u_prefix/suffix if need be.
-                //
-                if (vlc_stream->bits_left < 26)
-                    jpeg2000_bitbuf_refill_backwards(vlc_stream, Dcup + Pcup);
 
-                u_prefix[J2K_FIRST_QUAD] = vlc_decode_u_prefix(vlc_stream, Dcup + Pcup);
-                u_prefix[J2K_SECOND_QUAD] = vlc_decode_u_prefix(vlc_stream, Dcup + Pcup);
+                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+                u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
 
-                printf("u_prefix 1:%d u_prefix 2: %d\n", u_prefix[0], u_prefix[1]);
+                u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+                u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
 
-                u_suffix[J2K_FIRST_QUAD] = vlc_decode_u_suffix(vlc_stream, u_prefix[J2K_FIRST_QUAD], Dcup + Pcup);
-                u_suffix[J2K_SECOND_QUAD] = vlc_decode_u_suffix(vlc_stream, u_prefix[J2K_SECOND_QUAD], Dcup + Pcup);
+                u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+                u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
 
-                printf("u_prefix 1:%d u_prefix 2: %d\n", u_suffix[0], u_suffix[1]);
+                u[J2K_Q1] = 2 + u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+                u[J2K_Q2] = 2 + u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
 
-                u_extension[J2K_FIRST_QUAD] = vlc_decode_u_extension(vlc_stream, u_suffix[J2K_FIRST_QUAD], Dcup + Pcup);
-                u_extension[J2K_SECOND_QUAD] = vlc_decode_u_extension(vlc_stream, u_suffix[J2K_SECOND_QUAD], Dcup + Pcup);
+            } else {
+                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
 
-                printf("u_prefix 1:%d u_prefix 2: %d\n", u_extension[0], u_extension[1]);
+                if (u_pfx[J2K_Q1] > 2) {
+                    u[J2K_Q2] = jpeg2000_bitbuf_get_bits(vlc_stream, 1, vlc_buf) + 1;
+
+                    u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+
+                    u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+                } else {
+                    u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+                    u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+                    u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
+
+                    u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+                    u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
+
+                    u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
+                }
+                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
             }
+
+        } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
+            uint8_t pos;
+
+            if (res_off[J2K_Q1] == 1)
+                pos = 0;
+            else
+                pos = 1;
+
+            u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+            u_sfx[pos] = vlc_decode_u_suffix(vlc_stream, u_pfx[pos], vlc_buf);
+
+            u_ext[pos] = vlc_decode_u_extension(vlc_stream, u_sfx[pos], vlc_buf);
+
+            u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
+            // 0 if pos==1, 1 if pos==0.
+            u[res_off[J2K_Q1] == 0] = 0;
+        } else {
+            u[0] = 0;
+            u[1] = 1;
+        }
+        U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+        U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
+
+        for (int i = 0; i < 4; i++) {
+            m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
+            m[J2K_Q2][i] = sigma_n[4 * q1 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
         }
 
         exit(1);

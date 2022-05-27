@@ -29,9 +29,9 @@
 
 #include "bytestream.h"
 
-#define J2K_FIRST_QUAD 0
+#define J2K_Q1 0
 
-#define J2K_SECOND_QUAD 1
+#define J2K_Q2 1
 /**
  * @brief State Machine variables for block decoding
  *
