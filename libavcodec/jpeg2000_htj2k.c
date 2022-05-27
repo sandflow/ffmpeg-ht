@@ -154,7 +154,6 @@ void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits)
     buf->bits_left -= nbits;
 }
 
-
 uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
 {
 
@@ -251,7 +250,7 @@ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
 
     return 0;
 }
- uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
+uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 {
     uint8_t bits = jpeg2000_bitbuf_peek_bits(vlc_stream, 3);
 
@@ -271,10 +270,10 @@ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
         return 5;
 }
 
-uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t prefix, const uint8_t *refill_array)
+uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
 {
     uint8_t bits;
-    if (prefix < 3)
+    if (suffix < 3)
         return 0;
 
     if (vlc_stream->bits_left < 5)
@@ -282,7 +281,7 @@ uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t prefix, const uint8_t
 
     bits = jpeg2000_bitbuf_peek_bits(vlc_stream, 5);
 
-    if (prefix == 3) {
+    if (suffix == 3) {
         jpeg2000_bitbuf_drop_bits(vlc_stream, 1);
         return bits & 1;
     }
@@ -291,7 +290,14 @@ uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t prefix, const uint8_t
     return bits;
 }
 
-
+uint8_t vlc_decode_u_extension(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
+{
+    uint8_t bits;
+    if (suffix < 28)
+        return 0;
+    bits = jpeg2000_bitbuf_get_bits(vlc_stream, 4, refill_array);
+    return bits;
+}
 
 int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup)
 {
@@ -322,6 +328,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
     uint8_t u_prefix[2];
     uint8_t u_suffix[2];
+    uint8_t u_extension[2];
 
     const uint16_t *vlc_table;
 
@@ -389,6 +396,11 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
                 u_suffix[J2K_SECOND_QUAD] = vlc_decode_u_suffix(vlc_stream, u_prefix[J2K_SECOND_QUAD], Dcup + Pcup);
 
                 printf("u_prefix 1:%d u_prefix 2: %d\n", u_suffix[0], u_suffix[1]);
+
+                u_extension[J2K_FIRST_QUAD] = vlc_decode_u_extension(vlc_stream, u_suffix[J2K_FIRST_QUAD], Dcup + Pcup);
+                u_extension[J2K_SECOND_QUAD] = vlc_decode_u_extension(vlc_stream, u_suffix[J2K_SECOND_QUAD], Dcup + Pcup);
+
+                printf("u_prefix 1:%d u_prefix 2: %d\n", u_extension[0], u_extension[1]);
             }
         }
 
