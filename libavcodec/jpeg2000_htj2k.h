@@ -103,6 +103,19 @@ int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array);
  * */
 void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits);
 
+/**
+ * @brief  Get a variable number of bits from the stream
+ *
+ * @param  bit_stream   The struct containing the bit buffer and the number of bits left.
+ * @param  nbits        Number of bits to retrieve from the stream
+ * @param  buf          The array where we will be pulling in more bytes from in case it's empty
+ *
+ *@returns Lower `nbits` bits of the bit buffer
+ *
+ * This routine will refill bytes in case it can't satisfy the request to get `nbits`
+ * */
+uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
+
 void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
  * Entry point for Cleanup segment decoding

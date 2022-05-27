@@ -199,19 +199,19 @@ int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t
     return (mel_stream->tmp >> mel_stream->bits) & 1;
 }
 
-static uint64_t vlc_get_bits(StateVars *vlc_stream, uint8_t nbits, const uint8_t *bytes)
+uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
 {
 
     uint64_t bits;
     uint64_t mask = (1 << nbits) - 1;
-    if (vlc_stream->bits_left < nbits)
+    if (bit_stream->bits_left < nbits)
         // TODO: (cae) this may fail I  guess if there are no more bits,
         // add a check for it.
-        jpeg2000_bitbuf_refill_backwards(vlc_stream, bytes);
+        jpeg2000_bitbuf_refill_backwards(bit_stream, buf);
 
-    bits = vlc_stream->bit_buf & mask;
+    bits = bit_stream->bit_buf & mask;
 
-    jpeg2000_bitbuf_drop_bits(vlc_stream, nbits);
+    jpeg2000_bitbuf_drop_bits(bit_stream, nbits);
     return bits;
 };
 
