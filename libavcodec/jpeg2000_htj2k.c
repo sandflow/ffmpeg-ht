@@ -117,6 +117,8 @@ int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array)
     if (has_byte(tmp, 0xff)) {
         // borrowed from open_htj2k ht_block_decoding.cpp
 
+        // TODO(cae): confirm this is working
+
         // Load the next byte to check for stuffing.
         tmp <<= 8;
         tmp |= (uint64_t) * (array + position);
@@ -150,6 +152,30 @@ void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits)
     av_assert0(buf->bits_left >= nbits);
     buf->bit_buf >>= nbits;
     buf->bits_left -= nbits;
+}
+
+
+uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
+{
+
+    uint64_t bits;
+    uint64_t mask = (1 << nbits) - 1;
+    if (bit_stream->bits_left < nbits)
+        // TODO: (cae) this may fail I  guess if there are no more bits,
+        // add a check for it.
+        jpeg2000_bitbuf_refill_backwards(bit_stream, buf);
+
+    bits = bit_stream->bit_buf & mask;
+
+    jpeg2000_bitbuf_drop_bits(bit_stream, nbits);
+    return bits;
+};
+
+uint64_t jpeg2000_bitbuf_peek_bits(StateVars *stream, uint8_t nbits)
+{
+    uint64_t mask = (1 << nbits) - 1;
+
+    return stream->bit_buf & mask;
 }
 
 int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
@@ -197,29 +223,6 @@ int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t
     mel_stream->bits -= 1;
 
     return (mel_stream->tmp >> mel_stream->bits) & 1;
-}
-
-uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
-{
-
-    uint64_t bits;
-    uint64_t mask = (1 << nbits) - 1;
-    if (bit_stream->bits_left < nbits)
-        // TODO: (cae) this may fail I  guess if there are no more bits,
-        // add a check for it.
-        jpeg2000_bitbuf_refill_backwards(bit_stream, buf);
-
-    bits = bit_stream->bit_buf & mask;
-
-    jpeg2000_bitbuf_drop_bits(bit_stream, nbits);
-    return bits;
-};
-
-static uint64_t jpeg2000_bitbuf_peek_bits(StateVars *stream, uint8_t nbits)
-{
-    uint64_t mask = (1 << nbits) - 1;
-
-    return stream->bit_buf & mask;
 }
 
 static uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)

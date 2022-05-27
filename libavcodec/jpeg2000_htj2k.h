@@ -116,6 +116,14 @@ void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits);
  * */
 uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
 
+/**
+ * @brief Retrieve `nbits` from the bitbuffer but don't discard them
+ *
+ * @param stream The bit buffer
+ * @param nbits  The number of bits to to peek ahead
+ * */
+uint64_t jpeg2000_bitbuf_peek_bits(StateVars *stream, uint8_t nbits);
+
 void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
  * Entry point for Cleanup segment decoding
