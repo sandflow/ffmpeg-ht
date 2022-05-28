@@ -236,7 +236,20 @@ uint64_t jpeg2000_bitbuf_get_bits_lsb(StateVars *bit_stream, uint8_t nbits, cons
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
 };
+uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf, uint32_t length)
+{
 
+    uint64_t bits;
+    uint64_t mask = (1 << nbits) - 1;
+    if (bit_stream->bits_left < nbits)
+        // TODO: (cae) this may fail I  guess if there are no more bits,add a check for it.
+        jpeg2000_bitbuf_refill_forwards(bit_stream, buf, length);
+
+    bits = bit_stream->bit_buf & mask;
+
+    jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
+    return bits;
+};
 uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
 {
     uint64_t mask = (1 << nbits) - 1;
@@ -382,6 +395,16 @@ int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_stat
     return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, pos, Pcup, context);
 }
 
+int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, int32_t i_n, const uint8_t *buf, uint32_t length)
+{
+    int32_t val = 0;
+    if (m_n > 0) {
+        val = jpeg2000_bitbuf_get_bits_lsb_forward(mag_sgn_stream, m_n, buf, length);
+        val += (i_n << m_n);
+    }
+    return val;
+}
+
 int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height)
 {
 
@@ -402,7 +425,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
     int32_t u[2];
     int32_t U[2]; // Exponent bound (7.3.7)
     int32_t m_n[2];
-    int32_t known[2];
+    int32_t known_1[2];
 
     int32_t m[2][4];
     int32_t v[2][4];
@@ -534,7 +557,8 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         for (int i = 0; i < 4; i++) {
             n = 4 * q1 + i;
             m_n[J2K_Q1] = m[J2K_Q1][i];
-            known[J2K_Q1] = (emb_pat_1[J2K_Q1] >> i) & 1;
+            known_1[J2K_Q1] = (emb_pat_1[J2K_Q1] >> i) & 1;
+            v[J2K_Q1][i] = jpeg2000_decode_mag_sgn(mag_sgn_stream, m_n[J2K_Q1], known_1[J2K_Q1], Dcup, Pcup);
         }
         exit(1);
         // prepare context for the next quad

@@ -132,6 +132,9 @@ void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf, uint8_t nbits);
  * */
 uint64_t jpeg2000_bitbuf_get_bits_lsb(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
 
+
+uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf,uint32_t length);
+
 /**
  * @brief Retrieve `nbits` from the lower bitbuffer but don't discard them
  *
@@ -259,6 +262,19 @@ int jpeg2000_import_vlc_bit(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
  * @param context       Significance of a set of neighbouring samples
  * */
 int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context);
+
+/**
+ * @brief  Decode magnitude and sign value
+ * 
+ * @param mag_sgn_stream:   Magnitute and sign state variables
+ * @param m_n               Number of mag-sign bits
+ * @param i_n               Known -1 value i_n
+ * @param buf               Buffer to refill bits in case we run out of bits
+ * @param length            Length of the buffer
+ * 
+ * returns HT MagSgn value vn for the sample
+ */
+int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream,int32_t m_n,int32_t i_n,const uint8_t *buf,uint32_t length);
 
 /**
  * Decode a jpeg2000 High throughput bitstream
