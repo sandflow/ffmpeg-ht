@@ -88,23 +88,39 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
 }
 
 /**
- * Refill the bit buffer with new bytes unstuffing bits if needed
+ * @brief Refill the bit buffer with new bytes reading backwards from `array` and 
+ * unstuf bits if needed
  *
- * @param s. A jpeg2000 decoder context
- * @param buffer THe current bit-buffer where we are adding new bits
+ *
+ * @param buffer. The current buffer we are refilling
+ * @param array. The place we are pulling new bytes from
  *
  * */
 int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array);
+
 /**
- * @brief Drops bits from the bit buffer
+ * @brief  Refill the bit buffer with new bytes reading forwards from `array` 
+ * and unstuff bits if needed.
+ * 
+ * @param buffer The current buffer we are refilling
+ * @param array  The place we are pulling new bytes from.
+ * @param length The length of the buffer
+ *
+ * @return int 1 on error otherwise success
+ */
+int jpeg2000_bitbuf_refill_forwards(StateVars *buffer, const uint8_t *array, uint32_t length);
+
+
+/**
+ * @brief Drops bits from lower bits in the bit buffer
  *
  * @param buf: Struct containing bit buffers
  * @param nbits: Number of bits to remove.
  * */
-void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits);
+void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf, uint8_t nbits);
 
 /**
- * @brief  Get a variable number of bits from the stream
+ * @brief  Get a variable number of bits from lower bits of the stream
  *
  * @param  bit_stream   The struct containing the bit buffer and the number of bits left.
  * @param  nbits        Number of bits to retrieve from the stream
@@ -114,16 +130,21 @@ void jpeg2000_bitbuf_drop_bits(StateVars *buf, uint8_t nbits);
  *
  * This routine will refill bytes in case it can't satisfy the request to get `nbits`
  * */
-uint64_t jpeg2000_bitbuf_get_bits(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
+uint64_t jpeg2000_bitbuf_get_bits_lsb(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
 
 /**
- * @brief Retrieve `nbits` from the bitbuffer but don't discard them
+ * @brief Retrieve `nbits` from the lower bitbuffer but don't discard them
  *
  * @param stream The bit buffer
  * @param nbits  The number of bits to to peek ahead
  * */
-uint64_t jpeg2000_bitbuf_peek_bits(StateVars *stream, uint8_t nbits);
+uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits);
 
+/**
+ * @brief Initialize a MEL decoder
+ * 
+ * @param mel_state 
+ */
 void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
 /**
  * Entry point for Cleanup segment decoding
@@ -133,6 +154,8 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param cblk          Code block for this packet.
  * @param mel_state     Adaptive Run Length State variables
  * @param mel_stream    Adaptive Run Length BitStream variables.
+ * @param vlc_stream    Variable length coding bitstream
+ * @param mel_stream    Magnitude and sign bitstream.
  * @param Dcup          The bytes of a HT cleanup segment
  * @param Lcup          Length in bytes of the HT cleanup segment
  * @param Pcup          Prefix length of the HT cleanup segment.
@@ -140,7 +163,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param height        Height of the code block
  *
  * */
-int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height);
+int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream,StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height);
 
 /**
  * @brief Decode significance and EMB patterns
