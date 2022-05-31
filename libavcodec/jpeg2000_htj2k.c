@@ -26,6 +26,7 @@
 
 #include "jpeg2000_htj2k.h"
 #include "bytestream.h"
+#include <libavutil/attributes.h>
 #include <libavutil/common.h>
 #include <libavutil/log.h>
 #include <libavutil/mem.h>
@@ -522,6 +523,10 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         context |= sigma_n[4 * q2 + 1];      // sf
         context += sigma_n[4 * q2 + 2] << 1; // w << 1
         context += sigma_n[4 * q2 + 3] << 2; // sw << 2
+        
+        //  Final else if none of this work
+        u[0] = 0;
+        u[1] = 1;
 
         if (res_off[J2K_Q1] == 1 && res_off[J2K_Q2] == 1) {
             // max bits needed before refilling
@@ -533,7 +538,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
             if (vlc_stream->bits_left < 26)
                 jpeg2000_bitbuf_refill_backwards(vlc_stream, vlc_buf);
-
+            
             if (jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup) == 1) {
 
                 u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
@@ -588,10 +593,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
             u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
             // 0 if pos==1, 1 if pos==0.
             u[res_off[J2K_Q1] == 0] = 0;
-        } else {
-            u[0] = 0;
-            u[1] = 1;
-        }
+        }  
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
         U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
 
@@ -630,7 +632,53 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
         // move to the next quad pair
         q += 2;
     }
+    if (quad_width % 2 == 1) { // If the quad width is an odd number
+        // TODO: (cae), confirm everything is working here
+        // this codebase wasn't triggered  in the test case
+        q1 = q;
+        vlc_table = dec_CxtVLC_table0;
 
+        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q1, q, context, Lcup, Pcup) == -1)
+            goto error;
+        for (int i = 0; i < 4; i++) {
+            sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
+            printf("[2]sigma_n:%d\n", sigma_n[4 * q1 + i]);
+        }
+
+        u[J2K_Q1] = 0;
+
+        if (res_off[J2K_Q1] == 1){
+            u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+            u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+            u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
+            u[J2K_Q1] = u[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+        }
+    
+        U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+        
+        for (int i = 0;i < 4;i++)
+            m[J2K_Q1][i] = sigma_n[4*q1+i] * U[J2K_Q1] -((emb_pat_k[J2K_Q1] >> i ) & 1);
+        
+        // recover mag_sgm value 
+
+        // TODO (cae) maybe use a macro or an inlined function to 
+        // prevent this copy and paste thing you are about to do.
+           for (int i = 0; i < 4; i++) {
+            n = 4 * q1 + i;
+            m_n[J2K_Q1] = m[J2K_Q1][i];
+            known_1[J2K_Q1] = (emb_pat_1[J2K_Q1] >> i) & 1;
+            v[J2K_Q1][i] = jpeg2000_decode_mag_sgn(mag_sgn_stream, m_n[J2K_Q1], known_1[J2K_Q1], Dcup, Pcup);
+            if (m_n[J2K_Q1] != 0) {
+                E[n] = 32 - ff_clz(v[J2K_Q1][i]);
+                mu_n[n] = (v[J2K_Q1][i] >> 1) + 1;
+                mu_n[n] <<= pLSB;
+                mu_n[n] |= ((uint32_t)(v[J2K_Q1][i] & 1)) << 31; // sign bit.
+            }
+        }
+        q++; // move to next quad pair
+
+    }   // initial line-pair end.
+    
     exit(1);
     av_freep(sigma_n);
     av_freep(E);
