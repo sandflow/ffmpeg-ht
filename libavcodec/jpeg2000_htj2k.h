@@ -112,38 +112,6 @@ int jpeg2000_bitbuf_refill_forwards(StateVars *buffer, const uint8_t *array, uin
 
 
 /**
- * @brief Drops bits from lower bits in the bit buffer
- *
- * @param buf: Struct containing bit buffers
- * @param nbits: Number of bits to remove.
- * */
-void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf, uint8_t nbits);
-
-/**
- * @brief  Get a variable number of bits from lower bits of the stream
- *
- * @param  bit_stream   The struct containing the bit buffer and the number of bits left.
- * @param  nbits        Number of bits to retrieve from the stream
- * @param  buf          The array where we will be pulling in more bytes from in case it's empty
- *
- *@returns Lower `nbits` bits of the bit buffer
- *
- * This routine will refill bytes in case it can't satisfy the request to get `nbits`
- * */
-uint64_t jpeg2000_bitbuf_get_bits_lsb(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf);
-
-
-uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(StateVars *bit_stream, uint8_t nbits, const uint8_t *buf,uint32_t length);
-
-/**
- * @brief Retrieve `nbits` from the lower bitbuffer but don't discard them
- *
- * @param stream The bit buffer
- * @param nbits  The number of bits to to peek ahead
- * */
-uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits);
-
-/**
  * @brief Initialize a MEL decoder
  * 
  * @param mel_state 
@@ -166,7 +134,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param height        Height of the code block
  *
  * */
-int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream,StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, int width, int height);
+int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream,StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup,uint8_t pLSB, int width, int height);
 
 /**
  * @brief Decode significance and EMB patterns
@@ -217,23 +185,6 @@ int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel, const ui
  */
 int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup);
 
-/**
- * @brief Decode Variable Suffix Length
- *
- * @param vlc_stream    VLC bit-stream
- * @param prefix
- * @param refill_array  The array to pull more bytes in case the bit-stream doesn't have enough bits.
- **/
-uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array);
-/**
- * @brief Decode Variable Prefix Length
- * @param vlc_stream    VLC bit-stream
- * @param refill_array  The array to pull more bytes in case the bit-stream doesn't have enough bits.
- **/
-uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array);
-
-
-uint8_t vlc_decode_u_extension(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array);
 
 /**
  * @brief Retrieve VLC bits from the byte-stream
