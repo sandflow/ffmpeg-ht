@@ -27,6 +27,7 @@
 
 #include <inttypes.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
@@ -1065,6 +1066,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
         select_stream(s, tile, tp_index, codsty);
 
     if (!(ret = get_bits(s, 1))) {
+        // Zero length packet.
         jpeg2000_flush(s);
         goto skip_data;
     } else if (ret < 0)
@@ -1083,7 +1085,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
             Jpeg2000Cblk *cblk = prec->cblk + cblkno;
             int incl, newpasses, llen;
             void *tmp;
-
             if (cblk->npasses)
                 incl = get_bits(s, 1);
             else
@@ -1092,10 +1093,11 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 continue;
             else if (incl < 0)
                 return incl;
-
             if (!cblk->npasses) {
-                int v = expn[bandno] + numgbits - 1 -
-                        tag_tree_decode(s, prec->zerobits + cblkno, 100);
+                // zero bit plane information
+                int zbp =  tag_tree_decode(s, prec->zerobits + cblkno, 100);
+                int v = expn[bandno] + numgbits - 1 - zbp;
+                cblk->zerobitplanes = zbp;
                 if (v < 0 || v > 30) {
                     av_log(s->avctx, AV_LOG_ERROR,
                            "nonzerobits %d invalid or unsupported\n", v);

@@ -238,6 +238,7 @@ typedef struct Jpeg2000Cblk {
     uint8_t npasses;
     uint8_t ninclpasses; // number coding of passes included in codestream
     uint8_t nonzerobits;
+    uint8_t zerobitplanes;
     uint8_t incl;
     uint16_t length;
     uint16_t *lengthinc;
