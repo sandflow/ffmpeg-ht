@@ -688,7 +688,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
     for (int row = 1; row < quad_height; row++) {
         while ((q - (row * quad_width)) < quad_width - 1 && q < (quad_height * quad_width)) {
-            q41 = q;
+            q1 = q;
             q2 = q + 1;
 
             // calculate context for current quad
