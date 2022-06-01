@@ -937,15 +937,15 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
             q++;
         }
     }
-    av_freep(sigma_n);
-    av_freep(E);
-    av_freep(mu_n);
+    av_freep(&sigma_n);
+    av_freep(&E);
+    av_freep(&mu_n);
     return 1;
 
 error:
-    av_freep(sigma_n);
-    av_freep(E);
-    av_freep(mu_n);
+    av_freep(&sigma_n);
+    av_freep(&E);
+    av_freep(&mu_n);
     return 0;
 }
 
