@@ -147,7 +147,6 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
  * @param mel_stream    Adaptive run length bit stream variables.
  * @param vlc_stream    Variable Length coding bit stream variables.
  * @param vlc_table     A Variable length Context table described in Annex C.
- * @param q             Quad index
  * @param context       Significance of a set of neighbouring samples
  * @param Dcup          Bytes of the HT cleanup segment
  * @param sig_pat       Significance pattern  ρq
@@ -160,7 +159,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
  *
  * @returns  -1 on error.
  */
-int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t q, uint16_t context, uint32_t Lcup, uint32_t Pcup);
+int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos,  uint16_t context, uint32_t Lcup, uint32_t Pcup);
 
 /**
  * @brief Decode an adaptive run length symbol
