@@ -97,28 +97,16 @@ int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array)
         position -= 4;
         memcpy(&tmp, array + position + 1, 4);
         tmp = (uint64_t)av_bswap32((uint32_t)tmp);
-    } else if (position == 2) {
-        position = 0;
-        memcpy(&tmp, array + position + 1, 3);
-        tmp = (uint64_t)av_bswap32((uint32_t)tmp);
-        // TODO : (cae) confirm if this should be a shift
-        // or a masking operation.
-        tmp >>= 8;
-        new_bits -= 8;
-    } else if (position == 1) {
-        position = 0;
-        memcpy(&tmp, array + position + 1, 2);
-        tmp = (uint64_t)av_bswap16((uint16_t)tmp);
-        new_bits -= 16;
-    } else if (position == 0) {
-        position = -1;
-        memcpy(&tmp, array + position + 1, 1);
-        new_bits -= 24;
     } else {
-        if (buffer->bits_left == 0) {
-            printf("No bytes left");
-        }
-        return 1;
+        new_bits = (position + 1) * 8;
+
+        if (position >= 2)
+            tmp = array[position - 2];
+        if (position >= 1)
+            tmp = tmp << 8 | array[position - 1];
+        if (position >= 0)
+            tmp = tmp << 8 | array[position];
+        position = 0;
     }
     // check for stuff bytes (0xff)
     if (has_byte(tmp, 0xff)) {
@@ -154,6 +142,20 @@ int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array)
     buffer->pos = position;
     return 0;
 }
+static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer, const uint8_t *array, uint32_t length)
+{
+    while (buffer->bits_left < 32) {
+        buffer->tmp = 0xFF;
+        buffer->bits = (buffer->last == 0xFF) ? 7 : 8;
+        if (buffer->pos < length) {
+            buffer->tmp = array[buffer->pos];
+            buffer->pos += 1;
+            buffer->last = buffer->tmp;
+        }
+        buffer->bit_buf |= ((uint64_t)buffer->tmp) << buffer->bits_left;
+        buffer->bits_left += buffer->bits;
+    }
+}
 int jpeg2000_bitbuf_refill_forwards(StateVars *buffer, const uint8_t *array, uint32_t length)
 {
     uint64_t tmp = 0;
@@ -182,7 +184,6 @@ int jpeg2000_bitbuf_refill_forwards(StateVars *buffer, const uint8_t *array, uin
         position += 1;
         new_bits -= 24;
     } else {
-
         av_assert0(0);
         return 1;
     }
@@ -277,12 +278,11 @@ static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(StateVars 
 
     uint64_t bits;
     uint64_t mask = (1 << nbits) - 1;
-    if (bit_stream->bits_left < nbits)
+    if (bit_stream->bits_left <= nbits)
         // TODO: (cae) this may fail I  guess if there are no more bits,add a check for it.
-        jpeg2000_bitbuf_refill_forwards(bit_stream, buf, length);
+        jpeg2000_bitbuf_refill_bytewise(bit_stream, buf, length);
 
     bits = bit_stream->bit_buf & mask;
-
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
 };
@@ -348,12 +348,23 @@ static int jpeg2000_import_mel_bit_v0(StateVars *mel_stream, const uint8_t *Dcup
 }
 int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
 {
-    int32_t bit;
-    jpeg2000_bitbuf_refill_forwards(mel_stream, Dcup, Lcup);
+    // int32_t bit;
+    // jpeg2000_bitbuf_refill_bytewise(mel_stream, Dcup, Lcup);
 
-    bit = jpeg2000_bitbuf_get_bits_lsb_forward(mel_stream, 1, Dcup, Lcup);
+    // bit = jpeg2000_bitbuf_get_bits_lsb_forward(mel_stream, 1, Dcup, Lcup);
 
-    return bit;
+    // return bit;
+    if (mel_stream->bits == 0) {
+        mel_stream->bits = (mel_stream->tmp == 0xFF) ? 7 : 8;
+        if (mel_stream->pos < Lcup) {
+            mel_stream->tmp = Dcup[mel_stream->pos];
+            mel_stream->pos += 1;
+        } else
+            mel_stream->tmp = 0xFF;
+    }
+    mel_stream->bits -= 1;
+
+    return (mel_stream->tmp >> mel_stream->bits) & 1;
 }
 int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
 {
@@ -361,7 +372,7 @@ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
     uint8_t len;
     int index;
     int code_word;
-
+   
     jpeg2000_bitbuf_refill_backwards(vlc_stream, Dcup + Pcup);
 
     code_word = vlc_stream->bit_buf & 0x7f;
@@ -378,7 +389,6 @@ int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, co
     emb_pat_k[pos] = (uint8_t)((value & 0x0F00) >> 8);
     emb_pat_1[pos] = (uint8_t)((value & 0xF000) >> 12);
     jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, len);
-
     return 0;
 }
 static av_always_inline uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
@@ -496,30 +506,30 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
     int32_t n;
 
-    uint8_t sig_pat[2];   // significance pattern
-    uint8_t res_off[2];   // residual offset
-    uint8_t emb_pat_k[2]; // Exponent Max Bound pattern K
-    uint8_t emb_pat_1[2]; // Exponent Max Bound pattern 1.
-    uint8_t gamma[2];
+    uint8_t sig_pat[2] = {0};   // significance pattern
+    uint8_t res_off[2] = {0};   // residual offset
+    uint8_t emb_pat_k[2] = {0}; // Exponent Max Bound pattern K
+    uint8_t emb_pat_1[2] = {0}; // Exponent Max Bound pattern 1.
+    uint8_t gamma[2] = {0};
 
-    uint8_t E_n[2];
-    uint8_t E_ne[2];
-    uint8_t E_nw[2];
-    uint8_t E_nf[2];
+    uint8_t E_n[2] = {0};
+    uint8_t E_ne[2] = {0};
+    uint8_t E_nw[2] = {0};
+    uint8_t E_nf[2] = {0};
 
-    uint8_t max_e[2];
+    uint8_t max_e[2] = {0};
 
-    uint8_t u_pfx[2];
-    uint8_t u_sfx[2];
-    uint8_t u_ext[2];
+    uint8_t u_pfx[2] = {0};
+    uint8_t u_sfx[2] = {0};
+    uint8_t u_ext[2] = {0};
 
-    int32_t u[2];
-    int32_t U[2]; // Exponent bound (7.3.7)
-    int32_t m_n[2];
-    int32_t known_1[2];
+    int32_t u[2] = {0};
+    int32_t U[2] = {0}; // Exponent bound (7.3.7)
+    int32_t m_n[2] = {0};
+    int32_t known_1[2] = {0};
 
-    int32_t m[2][4];
-    int32_t v[2][4];
+    int32_t m[2][4] = {0};
+    int32_t v[2][4] = {0};
 
     uint8_t kappa[2] = {1, 1};
 
@@ -541,10 +551,12 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
     }
     if (!E) {
         av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for E buffer,", buf_size);
+        goto error;
     }
 
     if (!mu_n) {
         av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for mu_n buffer,", buf_size);
+        goto error;
     }
     while (q < quad_width - 1) {
         q1 = q;
@@ -575,6 +587,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
         if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, dec_CxtVLC_table0, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q2, context, Lcup, Pcup) == -1)
             goto error;
+
 
         if (res_off[J2K_Q2] == 0) {
             if (emb_pat_k[J2K_Q2] != 0) {
@@ -663,7 +676,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
             u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
             // 0 if pos==1, 1 if pos==0.
-            u[res_off[J2K_Q1] == 0] = 0;
+            u[res_off[J2K_Q1] == 1] = 0;
         }
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
         U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
