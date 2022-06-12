@@ -746,6 +746,11 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
      *
      * The expensive division is done outside of the loop and the inner loop implements modulus operation
      * with multiplications and shifts.
+     *
+     * TODO:(cae) Daniel Lemire posted a faster way to calculate remainder, see
+     * https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
+     *
+     * Consider it when optimizing this.
      */
     shift = 31 - ff_clz(quad_width);
 
@@ -764,7 +769,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
             if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
-                context1 += (sigma_n[4 * q1 - 1] | sigma_n[2 * q1 - 2]) << 1; // sw| q
+                context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1; // sw| q
             }
             if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
@@ -889,7 +894,7 @@ int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Me
 
             if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
-                context1 += (sigma_n[4 * q1 - 1] | sigma_n[2 * q1 - 2]) << 1; // (sw| w) << 1;
+                context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1; // (sw| w) << 1;
             }
             if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
