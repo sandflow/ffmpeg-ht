@@ -134,7 +134,7 @@ void jpeg2000_init_mel_decoder(MelDecoderState *mel_state);
  * @param height        Height of the code block
  *
  * */
-int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream,StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup,uint8_t pLSB, int width, int height);
+int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream,StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup,uint8_t pLSB, int width, int height);
 
 /**
  * @brief Decode significance and EMB patterns
