@@ -27,6 +27,7 @@
 
 #include <inttypes.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "libavutil/attributes.h"
 #include "libavutil/avassert.h"
@@ -42,101 +43,7 @@
 #include "jpeg2000.h"
 #include "jpeg2000dsp.h"
 #include "profiles.h"
-
-#define JP2_SIG_TYPE    0x6A502020
-#define JP2_SIG_VALUE   0x0D0A870A
-#define JP2_CODESTREAM  0x6A703263
-#define JP2_HEADER      0x6A703268
-
-#define HAD_COC 0x01
-#define HAD_QCC 0x02
-
-#define MAX_POCS 32
-
-typedef struct Jpeg2000POCEntry {
-    uint16_t LYEpoc;
-    uint16_t CSpoc;
-    uint16_t CEpoc;
-    uint8_t RSpoc;
-    uint8_t REpoc;
-    uint8_t Ppoc;
-} Jpeg2000POCEntry;
-
-typedef struct Jpeg2000POC {
-    Jpeg2000POCEntry poc[MAX_POCS];
-    int nb_poc;
-    int is_default;
-} Jpeg2000POC;
-
-typedef struct Jpeg2000TilePart {
-    uint8_t tile_index;                 // Tile index who refers the tile-part
-    const uint8_t *tp_end;
-    GetByteContext header_tpg;          // bit stream of header if PPM header is used
-    GetByteContext tpg;                 // bit stream in tile-part
-} Jpeg2000TilePart;
-
-/* RMK: For JPEG2000 DCINEMA 3 tile-parts in a tile
- * one per component, so tile_part elements have a size of 3 */
-typedef struct Jpeg2000Tile {
-    Jpeg2000Component   *comp;
-    uint8_t             properties[4];
-    Jpeg2000CodingStyle codsty[4];
-    Jpeg2000QuantStyle  qntsty[4];
-    Jpeg2000POC         poc;
-    Jpeg2000TilePart    tile_part[32];
-    uint8_t             has_ppt;                // whether this tile has a ppt marker
-    uint8_t             *packed_headers;        // contains packed headers. Used only along with PPT marker
-    int                 packed_headers_size;    // size in bytes of the packed headers
-    GetByteContext      packed_headers_stream;  // byte context corresponding to packed headers
-    uint16_t tp_idx;                    // Tile-part index
-    int coord[2][2];                    // border coordinates {{x0, x1}, {y0, y1}}
-} Jpeg2000Tile;
-
-typedef struct Jpeg2000DecoderContext {
-    AVClass         *class;
-    AVCodecContext  *avctx;
-    GetByteContext  g;
-
-    int             width, height;
-    int             image_offset_x, image_offset_y;
-    int             tile_offset_x, tile_offset_y;
-    uint8_t         cbps[4];    // bits per sample in particular components
-    uint8_t         sgnd[4];    // if a component is signed
-    uint8_t         properties[4];
-
-    uint8_t         has_ppm;
-    uint8_t         *packed_headers; // contains packed headers. Used only along with PPM marker
-    int             packed_headers_size;
-    GetByteContext  packed_headers_stream;
-    uint8_t         in_tile_headers;
-
-    int             cdx[4], cdy[4];
-    int             precision;
-    int             ncomponents;
-    int             colour_space;
-    uint32_t        palette[256];
-    int8_t          pal8;
-    int             cdef[4];
-    int             tile_width, tile_height;
-    unsigned        numXtiles, numYtiles;
-    int             maxtilelen;
-    AVRational      sar;
-
-    Jpeg2000CodingStyle codsty[4];
-    Jpeg2000QuantStyle  qntsty[4];
-    Jpeg2000POC         poc;
-    uint8_t             roi_shift[4];
-
-    int             bit_index;
-
-    int             curtileno;
-
-    Jpeg2000Tile    *tile;
-    Jpeg2000DSPContext dsp;
-
-    /*options parameters*/
-    int             reduction_factor;
-} Jpeg2000DecoderContext;
+#include "jpeg2000_htj2k.h"
 
 /* get_bits functions for JPEG2000 packet bitstream
  * It is a get_bit function with a bit-stuffing routine. If the value of the
@@ -239,33 +146,6 @@ static int pix_fmt_match(enum AVPixelFormat pix_fmt, int components,
     }
     return match;
 }
-
-// pix_fmts with lower bpp have to be listed before
-// similar pix_fmts with higher bpp.
-#define RGB_PIXEL_FORMATS   AV_PIX_FMT_PAL8,AV_PIX_FMT_RGB24,AV_PIX_FMT_RGBA,AV_PIX_FMT_RGB48,AV_PIX_FMT_RGBA64
-#define GRAY_PIXEL_FORMATS  AV_PIX_FMT_GRAY8,AV_PIX_FMT_GRAY8A,AV_PIX_FMT_GRAY16,AV_PIX_FMT_YA16
-#define YUV_PIXEL_FORMATS   AV_PIX_FMT_YUV410P,AV_PIX_FMT_YUV411P,AV_PIX_FMT_YUVA420P, \
-                            AV_PIX_FMT_YUV420P,AV_PIX_FMT_YUV422P,AV_PIX_FMT_YUVA422P, \
-                            AV_PIX_FMT_YUV440P,AV_PIX_FMT_YUV444P,AV_PIX_FMT_YUVA444P, \
-                            AV_PIX_FMT_YUV420P9,AV_PIX_FMT_YUV422P9,AV_PIX_FMT_YUV444P9, \
-                            AV_PIX_FMT_YUVA420P9,AV_PIX_FMT_YUVA422P9,AV_PIX_FMT_YUVA444P9, \
-                            AV_PIX_FMT_YUV420P10,AV_PIX_FMT_YUV422P10,AV_PIX_FMT_YUV444P10, \
-                            AV_PIX_FMT_YUVA420P10,AV_PIX_FMT_YUVA422P10,AV_PIX_FMT_YUVA444P10, \
-                            AV_PIX_FMT_YUV420P12,AV_PIX_FMT_YUV422P12,AV_PIX_FMT_YUV444P12, \
-                            AV_PIX_FMT_YUV420P14,AV_PIX_FMT_YUV422P14,AV_PIX_FMT_YUV444P14, \
-                            AV_PIX_FMT_YUV420P16,AV_PIX_FMT_YUV422P16,AV_PIX_FMT_YUV444P16, \
-                            AV_PIX_FMT_YUVA420P16,AV_PIX_FMT_YUVA422P16,AV_PIX_FMT_YUVA444P16
-#define XYZ_PIXEL_FORMATS   AV_PIX_FMT_XYZ12
-
-static const enum AVPixelFormat rgb_pix_fmts[]  = {RGB_PIXEL_FORMATS};
-static const enum AVPixelFormat gray_pix_fmts[] = {GRAY_PIXEL_FORMATS};
-static const enum AVPixelFormat yuv_pix_fmts[]  = {YUV_PIXEL_FORMATS};
-static const enum AVPixelFormat xyz_pix_fmts[]  = {XYZ_PIXEL_FORMATS,
-                                                   YUV_PIXEL_FORMATS};
-static const enum AVPixelFormat all_pix_fmts[]  = {RGB_PIXEL_FORMATS,
-                                                   GRAY_PIXEL_FORMATS,
-                                                   YUV_PIXEL_FORMATS,
-                                                   XYZ_PIXEL_FORMATS};
 
 /* marker segments */
 /* get sizes and offsets of image, tiles; number of components */
@@ -520,7 +400,12 @@ static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     c->cblk_style = bytestream2_get_byteu(&s->g);
-    if (c->cblk_style != 0) { // cblk style
+    if (c->cblk_style & JPEG2000_CTSY_HTJ2K_M || c->cblk_style & JPEG2000_CTSY_HTJ2K_F){
+      av_log(s->avctx,AV_LOG_TRACE,"High Throughput jpeg 2000 codestream.\n");
+      s->is_htj2k = 1;
+    }
+    if (c->cblk_style != 0  && !s->is_htj2k) { // cblk style
+
         av_log(s->avctx, AV_LOG_WARNING, "extra cblk styles %X\n", c->cblk_style);
         if (c->cblk_style & JPEG2000_CBLK_BYPASS)
             av_log(s->avctx, AV_LOG_WARNING, "Selective arithmetic coding bypass\n");
@@ -995,6 +880,68 @@ static int get_ppt(Jpeg2000DecoderContext *s, int n)
 
     return 0;
 }
+/* Parse extended capabilities marker */
+static int get_cap(Jpeg2000DecoderContext *s, int len) {
+    int pcap_ones; // contains number of set bits in pcap that are equal to 1.
+    int lcap;
+
+    if (len < 8 || len > 70){
+        // spec requires cap length to be between 8-70
+        av_log(s->avctx,AV_LOG_ERROR,"Invalid CAP length '%d'. Length should be between 8-70\n",len);
+        return AVERROR_INVALIDDATA;
+    }
+
+    s->pcap = bytestream2_get_be32u(&(s->g));
+
+    lcap = (len-6)/2;
+    pcap_ones = av_popcount_c(s->pcap);
+
+    if (lcap != pcap_ones){
+        // according to the spec ,length is the same as number of set bits in pcap header.
+        av_log(s->avctx,AV_LOG_ERROR,
+               "Length of marker`%d` not equal to set bits in Pcap segment(bits set to 1 in Pcap are %d).\n",lcap,pcap_ones);
+        return AVERROR_INVALIDDATA;
+    }
+    /*  According to the spec again Ccapⁱ exists if and only if the ith bit of Pcap is set.
+     *  Since pcap can have 32 bits, we loop until we read all Ccaps'  of set bits
+     *
+     *  Also since the spec addresses Pcap¹ as the most significant bit of 1(31st bit),the
+     *  array also takes that into account, storing at ccap[1] if (Pcap & 1<<31) == 1
+     */
+    for (int i=0;i<32;i++)
+        if (s->pcap & (1<<(32-i)))
+            s->ccap[i] = bytestream2_get_be16u(&(s->g));
+
+    return 0;
+}
+
+static int get_cpf(Jpeg2000DecoderContext *s, int len) {
+    /*
+     * The corresponding profile (CPF) marker segment is provided to facilitate the reversible transcoding of HTJ2K
+     * codestreams to and from codestreams that conform to Rec. ITU-T T.800 | ISO/IEC 15444-1.
+     */
+
+    int n;
+
+    if ((len < 4) || (len > 65534)) {
+        av_log(s->avctx,AV_LOG_ERROR,"CPF marker length %d not in range 4-65534",len);
+        return AVERROR_INVALIDDATA;
+    }
+
+    n = (len-2)/2;
+
+    s->pcpf = av_calloc(n,sizeof (uint16_t));
+
+    if (!s->pcpf) {  // calloc failed
+        av_log(s->avctx,AV_LOG_FATAL,"Out of memory. Cannot reserve space of size %d for Pcpf",n);
+        // TODO:Change this once we figure out how to report oom errors
+        return AVERROR_BUG;
+    }
+    for (int i=0;i<n;i++)
+        s->pcpf[i] = bytestream2_get_be16u(&(s->g));
+
+    return 0;
+}
 
 static int init_tile(Jpeg2000DecoderContext *s, int tileno)
 {
@@ -1119,6 +1066,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
         select_stream(s, tile, tp_index, codsty);
 
     if (!(ret = get_bits(s, 1))) {
+        // Zero length packet.
         jpeg2000_flush(s);
         goto skip_data;
     } else if (ret < 0)
@@ -1137,7 +1085,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
             Jpeg2000Cblk *cblk = prec->cblk + cblkno;
             int incl, newpasses, llen;
             void *tmp;
-
             if (cblk->npasses)
                 incl = get_bits(s, 1);
             else
@@ -1146,10 +1093,11 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 continue;
             else if (incl < 0)
                 return incl;
-
             if (!cblk->npasses) {
-                int v = expn[bandno] + numgbits - 1 -
-                        tag_tree_decode(s, prec->zerobits + cblkno, 100);
+                // zero bit plane information
+                int zbp =  tag_tree_decode(s, prec->zerobits + cblkno, 100);
+                int v = expn[bandno] + numgbits - 1 - zbp;
+                cblk->zerobitplanes = zbp;
                 if (v < 0 || v > 30) {
                     av_log(s->avctx, AV_LOG_ERROR,
                            "nonzerobits %d invalid or unsupported\n", v);
@@ -1308,7 +1256,7 @@ static int jpeg2000_decode_packets_po_iteration(Jpeg2000DecoderContext *s, Jpeg2
     int step_x, step_y;
 
     switch (Ppoc) {
-    case JPEG2000_PGOD_RLCP:
+    case JPEG2000_PGOD_RLCP :
         av_log(s->avctx, AV_LOG_DEBUG, "Progression order RLCP\n");
         ok_reslevel = 1;
         for (reslevelno = RSpoc; ok_reslevel && reslevelno < REpoc; reslevelno++) {
@@ -1975,16 +1923,23 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile
                     for (cblkno = 0;
                          cblkno < prec->nb_codeblocks_width * prec->nb_codeblocks_height;
                          cblkno++) {
-                        int x, y;
+                        int x, y,ret;
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
-                        int ret = decode_cblk(s, codsty, &t1, cblk,
+                        if (s->is_htj2k)
+                          ret = decode_htj2k(s, codsty, &t1, cblk,
+                                             cblk->coord[0][1] - cblk->coord[0][0],
+                                             cblk->coord[1][1] - cblk->coord[1][0],
+                                             bandpos, comp->roi_shift);
+                        else
+                          ret = decode_cblk(s, codsty, &t1, cblk,
                                     cblk->coord[0][1] - cblk->coord[0][0],
                                     cblk->coord[1][1] - cblk->coord[1][0],
                                     bandpos, comp->roi_shift);
+
                         if (ret)
-                            coded = 1;
+                          coded = 1;
                         else
-                            continue;
+                          continue;
                         x = cblk->coord[0][0] - band->coord[0][0];
                         y = cblk->coord[1][0] - band->coord[1][0];
 
@@ -2128,8 +2083,69 @@ static void jpeg2000_dec_cleanup(Jpeg2000DecoderContext *s)
     memset(&s->poc  , 0, sizeof(s->poc));
     s->numXtiles = s->numYtiles = 0;
     s->ncomponents = 0;
+
+    av_freep(&s->pcpf);
 }
 
+static int jpeg2000_set_htj2k_constrains(Jpeg2000DecoderContext *s,Jpeg2000HTJ2KCodeStream *stream)
+{
+    uint16_t bits;
+    uint8_t  mag_b;
+    bits = s->ccap[15] >> 14;
+
+    switch (bits) {
+        case 0b00:
+            stream->code_block = HTJ2K_HTONLY;
+            break;
+        case 0b10:
+            stream->code_block = HTJ2K_MIXED;
+            break;
+        case 0b11:
+            stream->code_block = HTJ2K_HTDECLARED;
+            break;
+        default:
+            av_log(s->avctx,AV_LOG_ERROR,"Bits 14 and 15 of Ccap 15 are %d which cannot be currently decoded.\n",bits);
+            return AVERROR_PATCHWELCOME;
+    }
+
+    if ((s->ccap[15] >> 13) & 1)
+        stream->num_code_blocks = HTJ2K_MULTIHT;
+    else
+        stream->num_code_blocks = HTJ2K_SINGLEHT;
+
+    if ((s->ccap[15] >> 12) & 1)
+        stream->rgn = HTJ2K_RGN;
+    else
+        stream->rgn = HTJ2K_RGNFREE;
+
+    if ((s->ccap[15] >> 11) & 1)
+        stream->code_stream = HTJ2K_HETEROGENOUS;
+    else
+        stream->code_stream = HTJ2K_HOMOGENOUS;
+
+    if ((s->ccap[15] >> 5) & 1)
+        stream->reversible_transforms = HTJ2K_HTIRV;
+    else
+        stream->reversible_transforms = HTJ2K_HTREV;
+
+    bits = (s->ccap[15]) & ((1 << 5)-1);
+
+    if (bits == 0)
+        mag_b = 8;
+    else if (bits < 20)
+        mag_b = bits + 8;
+    else if (bits < 31)
+        mag_b = 4 * (bits - 19) + 27;
+    else
+        mag_b= 74;
+    // TODO. Add a cast checker here.
+    // This is dangerous if we got the conversion wrong, before submitting to ffmpeg
+    // ensure we check no cast is undefined.
+    // @caleb
+    stream->magnitude_bounds = (Jpeg2000MagnitudeBounds ) mag_b;
+    return  0;
+
+}
 static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
 {
     Jpeg2000CodingStyle *codsty = s->codsty;
@@ -2155,6 +2171,31 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             Jpeg2000Tile *tile;
             Jpeg2000TilePart *tp;
 
+
+            if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
+                Jpeg2000HTJ2KCodeStream stream;
+                /* Confirm Marker constraints according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
+                // A.2
+                if (!(s->avctx->profile & (1<<14))){
+                    av_log(s->avctx, AV_LOG_ERROR, "Bit 14 of Rsiz is not equal to 1\n");
+                    return AVERROR_INVALIDDATA;
+                }
+                // A.3.1
+                if(!(s->pcap & (1 << (17)))){ // 15th MSB of Pcap
+                    av_log(s->avctx, AV_LOG_ERROR, "Bit 15 of Pcap is not equal to 1\n");
+                    return AVERROR_INVALIDDATA;
+                }
+                // A.5
+                for (int i=0;i<4;i++){
+                    if (s->roi_shift[i]>37){
+                        av_log(s->avctx, AV_LOG_ERROR, "ROI coefficient %d is greater than 37.\n",s->roi_shift[i]);
+                        return AVERROR_INVALIDDATA;
+                    }
+                }
+                if (jpeg2000_set_htj2k_constrains(s,&stream)){
+                    return AVERROR_BUG;
+                };
+            }
             if (!s->tile) {
                 av_log(s->avctx, AV_LOG_ERROR, "Missing SIZ\n");
                 return AVERROR_INVALIDDATA;
@@ -2209,6 +2250,31 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             ret = get_siz(s);
             if (!s->tile)
                 s->numXtiles = s->numYtiles = 0;
+            break;
+        case JPEG2000_CAP:
+            if (!(s->ncomponents)) {
+                av_log(s->avctx, AV_LOG_ERROR,
+                       "Cannot decode a CAP marker without previously decoding a SIZ marker\n");
+                return AVERROR_INVALIDDATA;
+            }
+            /*
+             * According to the spec decoding a CAP marker is mandatory only if the 14th bit of Rsiz is set to 1.
+             * To indicate the decoder needs to implement extended capabilities to decode the image.
+             * If the bit is not set, we skip over parsing the CAP segment.
+             */
+            if (s->avctx->profile & (1<<14)) {
+                if (s->in_tile_headers){
+                    av_log(s->avctx,AV_LOG_ERROR,"CAP marker can only be in main header");
+                    return AVERROR_INVALIDDATA;
+                }
+                ret = get_cap(s,len);
+            } else{
+                av_log(s->avctx,AV_LOG_INFO,"Skipping parsing of the CAP segment");
+                bytestream2_skip(&(s->g),len-2);
+            }
+            break;
+        case JPEG2000_CPF:
+            ret = get_cpf(s,len);
             break;
         case JPEG2000_COC:
             ret = get_coc(s, codsty, properties);

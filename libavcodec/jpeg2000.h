@@ -37,24 +37,26 @@
 
 enum Jpeg2000Markers {
     JPEG2000_SOC = 0xff4f, // start of codestream
+    JPEG2000_CAP = 0xff50, // Fixed information marker segments
     JPEG2000_SIZ = 0xff51, // image and tile size
-    JPEG2000_COD,          // coding style default
-    JPEG2000_COC,          // coding style component
+    JPEG2000_COD = 0xff52, // coding style default
+    JPEG2000_COC = 0xff53, // coding style component
     JPEG2000_TLM = 0xff55, // tile-part length, main header
     JPEG2000_PLM = 0xff57, // packet length, main header
-    JPEG2000_PLT,          // packet length, tile-part header
+    JPEG2000_PLT = 0xff58, // packet length, tile-part header
+    JPEG2000_CPF = 0xff59, // reversible transcoding of HT2K files to other code streams
     JPEG2000_QCD = 0xff5c, // quantization default
-    JPEG2000_QCC,          // quantization component
-    JPEG2000_RGN,          // region of interest
-    JPEG2000_POC,          // progression order change
-    JPEG2000_PPM,          // packed packet headers, main header
-    JPEG2000_PPT,          // packed packet headers, tile-part header
+    JPEG2000_QCC = 0xff5d, // quantization component
+    JPEG2000_RGN = 0xff5e, // region of interest
+    JPEG2000_POC = 0xff5f, // progression order change
+    JPEG2000_PPM = 0xff60, // packed packet headers, main header
+    JPEG2000_PPT = 0xff61, // packed packet headers, tile-part header
     JPEG2000_CRG = 0xff63, // component registration
-    JPEG2000_COM,          // comment
+    JPEG2000_COM = 0xff64, // comment
     JPEG2000_SOT = 0xff90, // start of tile-part
-    JPEG2000_SOP,          // start of packet
-    JPEG2000_EPH,          // end of packet header
-    JPEG2000_SOD,          // start of data
+    JPEG2000_SOP = 0xff91, // start of packet
+    JPEG2000_EPH = 0xff92, // end of packet header
+    JPEG2000_SOD = 0xff93, // start of data
     JPEG2000_EOC = 0xffd9, // end of codestream
 };
 
@@ -66,6 +68,66 @@ enum Jpeg2000Quantsty { // quantization style
     JPEG2000_QSTY_SI,   // scalar derived
     JPEG2000_QSTY_SE    // scalar expounded
 };
+typedef enum Jpeg2000HtCodeBlocks{
+    HTJ2K_HTONLY,       // All code blocks are HT code-blocks
+    HTJ2K_HTDECLARED,   // Mixed HT and Part 1 code blocks for a particular tile
+    HTJ2K_MIXED         // Mixed HT and Part 1 code blocks but not found in tiles
+} Jpeg2000HtCodeBlocks;
+
+typedef  enum Jpeg2000NumCodeBlocks{
+
+    HTJ2K_SINGLEHT , // Zero or one HT set is present for any code block
+    HTJ2K_MULTIHT,   // More than one HT sets can be present
+} Jpeg2000NumCodeBlocks;
+typedef  enum Jpeg2000Rgn{
+    HTJ2K_RGN,      // No region of interest marker present
+    HTJ2K_RGNFREE,  // Region of interest marker can be present
+} Jpeg2000Rgn;
+
+typedef enum Jpeg2000CodeStream{
+    HTJ2K_HOMOGENOUS,   // Homogenous code stream
+    HTJ2K_HETEROGENOUS, // Heterogeneous code stream
+} Jpeg2000CodeStream;
+
+typedef  enum Jpeg2000Reversible{
+    HTJ2K_HTIRV,  // High throughput irreversible code stream
+    HTJ2K_HTREV,  // High throughput reversible code stream.
+} Jpeg2000Reversible;
+
+typedef enum Jpeg2000MagnitudeBounds{
+    MAGB_00 = 8,
+    MAGB_01 = 9,
+    MAGB_02 = 10,
+    MAGB_03 = 11,
+    MAGB_04 = 12,
+    MAGB_05 = 13,
+    MAGB_06 = 14,
+    MAGB_07 = 15,
+    MAGB_08 = 16,
+    MAGB_09 = 17,
+    MAGB_10 = 18,
+    MAGB_11 = 19,
+    MAGB_12 = 20,
+    MAGB_13 = 21,
+    MAGB_14 = 22,
+    MAGB_15 = 23,
+    MAGB_16 = 24,
+    MAGB_17 = 25,
+    MAGB_18 = 26,
+    MAGB_19 = 27,
+    MAGB_20 = 31,
+    MAGB_21 = 35,
+    MAGB_22 = 39,
+    MAGB_23 = 43,
+    MAGB_24 = 47,
+    MAGB_25 = 51,
+    MAGB_26 = 55,
+    MAGB_27 = 59,
+    MAGB_28 = 63,
+    MAGB_29 = 67,
+    MAGB_30 = 71,
+    MAGB_31 = 74,
+} Jpeg2000MagnitudeBounds;
 
 #define JPEG2000_MAX_DECLEVELS 33
 #define JPEG2000_MAX_RESLEVELS (JPEG2000_MAX_DECLEVELS + 1)
@@ -110,6 +172,8 @@ enum Jpeg2000Quantsty { // quantization style
 #define JPEG2000_CSTY_PREC      0x01 // Precincts defined in coding style
 #define JPEG2000_CSTY_SOP       0x02 // SOP marker present
 #define JPEG2000_CSTY_EPH       0x04 // EPH marker present
+#define JPEG2000_CTSY_HTJ2K_F   0x40 // Only HT code-blocks (Rec. ITU-T T.814 | ISO/IEC 15444-15) are present
+#define JPEG2000_CTSY_HTJ2K_M   0xC0 // HT code blocks (Rec. ITU-T T.814 | ISO/IEC 15444-15) can be present
 
 // Progression orders
 #define JPEG2000_PGOD_LRCP      0x00  // Layer-resolution level-component-position progression
@@ -174,6 +238,7 @@ typedef struct Jpeg2000Cblk {
     uint8_t npasses;
     uint8_t ninclpasses; // number coding of passes included in codestream
     uint8_t nonzerobits;
+    uint8_t zerobitplanes;
     uint8_t incl;
     uint16_t length;
     uint16_t *lengthinc;
@@ -224,6 +289,15 @@ typedef struct Jpeg2000Component {
     int coord_o[2][2]; // border coordinates {{x0, x1}, {y0, y1}} -- original values from jpeg2000 headers
     uint8_t roi_shift; // ROI scaling value for the component
 } Jpeg2000Component;
+
+typedef struct Jpeg2000HTJ2KCodeStream{
+    Jpeg2000HtCodeBlocks    code_block;
+    Jpeg2000NumCodeBlocks   num_code_blocks;
+    Jpeg2000Rgn             rgn;
+    Jpeg2000CodeStream      code_stream;
+    Jpeg2000Reversible      reversible_transforms;
+    Jpeg2000MagnitudeBounds magnitude_bounds;
+} Jpeg2000HTJ2KCodeStream;
 
 /* misc tools */
 static inline int ff_jpeg2000_ceildivpow2(int a, int b)
