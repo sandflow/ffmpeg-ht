@@ -1126,13 +1126,10 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 if (!tmp)
                     return AVERROR(ENOMEM);
                 cblk->data_start = tmp;
-
                 cblk->lblock += llen;
-
 
                 int nb_segments = 0;
                 uint16_t *segment_length = av_calloc(newpasses, sizeof(uint16_t));
-
 
                 uint8_t bypass_term_threshold = 0;
                 uint8_t bits_to_read = 0;
