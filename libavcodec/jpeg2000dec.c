@@ -1080,8 +1080,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 incl = tag_tree_decode(s, prec->cblkincl + cblkno, layno + 1) == layno;
 
                 if (incl) {
-                    cblk->incl = 1;
                     int zbp = tag_tree_decode(s, prec->zerobits + cblkno, 100);
+                    cblk->incl = 1;
                     if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) == 0) {
                         int v = expn[bandno] + numgbits - 1 - zbp;
 
@@ -1101,6 +1101,21 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
             }
 
             if (incl) {
+                int nb_segments = 0;
+                uint16_t *segment_length = NULL;
+                uint8_t bypass_term_threshold = 0;
+                uint8_t bits_to_read = 0;
+                uint8_t pass_index = cblk->npasses;
+                uint32_t segment_bytes = 0;
+                int32_t segment_passes = 0;
+                uint8_t next_segment_passes = 0;
+                int32_t href_passes, pass_bound;
+                uint8_t primary_passes, secondary_passes;
+                uint32_t primary_bytes, secondary_bytes;
+                uint32_t fast_skip_bytes = 0;
+                int empty_set;
+                uint32_t tmp_length = 0;
+
                 if ((newpasses = getnpasses(s)) < 0)
                     return newpasses;
                 av_assert2(newpasses > 0);
@@ -1128,16 +1143,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 cblk->data_start = tmp;
                 cblk->lblock += llen;
 
-                int nb_segments = 0;
-                uint16_t *segment_length = av_calloc(newpasses, sizeof(uint16_t));
-
-                uint8_t bypass_term_threshold = 0;
-                uint8_t bits_to_read = 0;
-                uint8_t pass_index = cblk->npasses;
-                uint32_t segment_bytes = 0;
-                int32_t segment_passes = 0;
-                uint8_t next_segment_passes = 0;
-                int32_t href_passes, pass_bound;
+                segment_length = av_calloc(newpasses, sizeof(uint16_t));
 
                 if (cblk->modes & HT_PLHD) {
                     href_passes = (pass_index + newpasses - 1) % 3;
@@ -1281,10 +1287,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) == JPEG2000_CTSY_HTJ2K_F && !cblk->pass_lengths[0])
                     cblk->pass_lengths[0] = segment_bytes;
 
-                uint8_t primary_passes, secondary_passes;
-                uint32_t primary_bytes, secondary_bytes;
-                uint32_t fast_skip_bytes = 0;
-                int empty_set;
                 if ((cblk->modes & (JPEG2000_CTSY_HTJ2K_F | HT_PLHD)) == JPEG2000_CTSY_HTJ2K_F) {
                     newpasses -= (uint8_t) segment_passes;
                     primary_passes = (uint8_t) (segment_passes + cblk->fast_skip_passes);
@@ -1370,7 +1372,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     cblk->pass_lengths[1] = segment_bytes;
                 }
 
-                uint32_t tmp_length = 0;
                 for (int i = 0; i < nb_segments; ++i)
                     tmp_length = (tmp_length < segment_length[i]) ? segment_length[i] : tmp_length;
 
