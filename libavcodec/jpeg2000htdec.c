@@ -992,7 +992,7 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
         }
     }
     ret = 1;
-    free:
+free:
     av_freep(&sigma_n);
     av_freep(&E);
     av_freep(&mu_n);
