@@ -1223,8 +1223,6 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     const uint32_t mask  = UINT32_MAX >> (M_b + 1); // bit mask for ROI detection
     uint8_t num_rempass;
 
-    uint8_t dummy[8] = { 0 };
-
     const int quad_buf_width = width + 4;
     const int quad_buf_height = height + 4;
 
