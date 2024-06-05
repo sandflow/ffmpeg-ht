@@ -145,8 +145,9 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
 static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array)
 {
     uint64_t tmp = 0;
-    int32_t position = buffer->pos - 4;
     uint32_t new_bits = 32;
+
+    buffer->last = array[buffer->pos + 1];
 
     if (buffer->bits_left >= 32)
         return 0; // enough data, no need to pull in more bits
@@ -157,9 +158,27 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *ar
      *  the bottom most bits.
      */
 
-    for(int i = FFMAX(0, position + 1); i <= buffer->pos + 1; i++)
-        tmp = 256*tmp + array[i];
-
+    if (buffer->pos >= 3) {  // Common case; we have at least 4 bytes available
+         tmp = array[buffer->pos - 3];
+         tmp = (tmp << 8) | array[buffer->pos - 2];
+         tmp = (tmp << 8) | array[buffer->pos - 1];
+         tmp = (tmp << 8) | array[buffer->pos];
+         tmp = (tmp << 8) | buffer->last;  // For stuffing bit detection
+         buffer->pos -= 4;
+    } else {
+        if (buffer->pos >= 2) {
+            tmp = array[buffer->pos - 2];
+        }
+        if (buffer->pos >= 1) {
+            tmp = (tmp << 8) | array[buffer->pos - 1];
+        }
+        if (buffer->pos >= 0) {
+            tmp = (tmp << 8) | array[buffer->pos];
+        }
+        buffer->pos = 0;
+        tmp = (tmp << 8) | buffer->last;  // For stuffing bit detection
+    }
+    // Now remove any stuffing bits, shifting things down as we go
     if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
         tmp &= 0x7FFFFFFFFF;
         new_bits--;
@@ -176,13 +195,11 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *ar
         tmp = (tmp & 0x0000007FFF) + ((tmp & 0xFFFFFF0000) >> 1);
         new_bits--;
     }
-
-    tmp >>= 8; // Remove temporary byte loaded
+    tmp >>= 8;  // Shifts away the extra byte we imported
 
     /* Add bits to the MSB of the bit buffer */
     buffer->bit_buf |= tmp << buffer->bits_left;
     buffer->bits_left += new_bits;
-    buffer->pos = FFMAX(0, position);
     return 0;
 }
 
@@ -414,8 +431,8 @@ static void recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t
 
 static int jpeg2000_import_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
-    int cond = stream->pos <= length;
-    int pos = FFMIN(stream->pos, length);
+    int cond = stream->pos < length;
+    int pos = FFMIN(stream->pos, length - 1);
     if (stream->bits == 0) {
         stream->bits = (stream->tmp == 0xFF) ? 7 : 8;
         stream->pos += cond;
@@ -1251,11 +1268,7 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     Dcup = cblk->data;
     Dref  = cblk->data + Lcup; // Dref comes after the refinement segment
 
-   if (Lref == 0) {
-       // Prevent buffer overflow 
-       Dref = dummy;
-       Lref = 8;
-   }
+    cblk->data[cblk->length] = 0xFF; // an extra byte for refinement segment (buffer->last)
 
     S_blk = p0 + cblk->zbp;
     cblk->zbp = S_blk - 1;

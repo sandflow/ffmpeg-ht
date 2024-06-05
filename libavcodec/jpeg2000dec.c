@@ -54,8 +54,10 @@
 #define HAD_COC 0x01
 #define HAD_QCC 0x02
 
-// Pseudo mode for placeholder passes
-#define HT_PLHD 0x100
+// Values of flag for placeholder passes
+#define HT_PLHD_ON 1
+#define HT_PLHD_OFF 0
+
 
 /* get_bits functions for JPEG2000 packet bitstream
  * It is a get_bit function with a bit-stuffing routine. If the value of the
@@ -1074,7 +1076,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 incl = 0;
                 cblk->modes = codsty->cblk_style;
                 if (cblk->modes >= JPEG2000_CTSY_HTJ2K_F)
-                    cblk->modes |= HT_PLHD;
+                    cblk->plhd_flag = HT_PLHD_ON;
                 if (layno > 0)
                     incl = tag_tree_decode(s, prec->cblkincl + cblkno, 0 + 1) == 0;
                 incl = tag_tree_decode(s, prec->cblkincl + cblkno, layno + 1) == layno;
@@ -1118,7 +1120,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
 
                 if ((newpasses = getnpasses(s)) < 0)
                     return newpasses;
-                av_assert2(newpasses > 0);
+                if(newpasses <= 0)
+                    av_log(s->avctx, AV_LOG_ERROR, "Invalid number of passes is found in the packet header.\n");
                 if (cblk->npasses + newpasses >= JPEG2000_MAX_PASSES) {
                     avpriv_request_sample(s->avctx, "Too many passes");
                     return AVERROR_PATCHWELCOME;
@@ -1145,7 +1148,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
 
                 segment_length = av_calloc(newpasses, sizeof(uint16_t));
 
-                if (cblk->modes & HT_PLHD) {
+                if (cblk->plhd_flag) {
                     href_passes = (pass_index + newpasses - 1) % 3;
                     segment_passes = newpasses - href_passes;
                     pass_bound = 2;
@@ -1174,15 +1177,20 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                                 if (segment_bytes < 2)
                                     av_log(s->avctx, AV_LOG_ERROR, "Length information for a HT-codeblock is invalid\n");
                                 next_segment_passes = 2;
-                                cblk->modes &= (uint16_t) (~(HT_PLHD));
+                                cblk->plhd_flag = HT_PLHD_OFF;
+                                // Write length information for HT CleanUp segment
+                                cblk->pass_lengths[0] = segment_bytes; ////////////////////////////////////////////////
                             } else if (cblk->lblock > 3 && segment_bytes > 1
                                        && (segment_bytes >> (bits_to_read - 1)) == 0) {
                                 // Must be the first HT Cleanup pass, since length MSB is 0
                                 next_segment_passes = 2;
-                                cblk->modes &= (uint16_t) (~(HT_PLHD));
+                                cblk->plhd_flag = HT_PLHD_OFF;
+                                // Write length information for HT CleanUp segment
+                                cblk->pass_lengths[0] = segment_bytes; ////////////////////////////////////////////////
                             } else {
                                 // Must have an original (non-HT) block coding pass
-                                cblk->modes &= (uint16_t) (~(HT_PLHD | JPEG2000_CTSY_HTJ2K_F));
+                                cblk->modes &= (uint8_t) (~(JPEG2000_CTSY_HTJ2K_F));
+                                cblk->plhd_flag = HT_PLHD_OFF;
                                 segment_passes = newpasses;
                                 while (pass_bound <= segment_passes) {
                                     bits_to_read++;
@@ -1208,9 +1216,10 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                                         break;
                                 }
                                 if (segment_bytes) {
-                                    if (cblk->modes & 0x080)
-                                        cblk->modes &= (uint16_t) (~(HT_PLHD | JPEG2000_CTSY_HTJ2K_F));
-                                    else
+                                    if (cblk->modes & 0x080) {
+                                        cblk->modes &= (uint8_t) (~(JPEG2000_CTSY_HTJ2K_F));
+                                        cblk->plhd_flag = HT_PLHD_OFF;
+                                    } else
                                         av_log(s->avctx, AV_LOG_ERROR, "Length information for a HT-codeblock is invalid\n");
                                 }
                             }
@@ -1218,16 +1227,17 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     }
                 } else if (cblk->modes & JPEG2000_CTSY_HTJ2K_F) {
                     // Quality layer commences with a non-initial HT coding pass
-                    assert(bits_to_read == 0);
+                    if(bits_to_read != 0)
+                        av_log(s->avctx, AV_LOG_ERROR, "Length information for a HT-codeblock is invalid\n");
                     segment_passes = cblk->npasses % 3;
                     if (segment_passes == 0) {
-                        // npasses is a HT Cleanup pass; next segment has refinement passes
+                        // newpasses is a HT Cleanup pass; next segment has refinement passes
                         segment_passes = 1;
                         next_segment_passes = 2;
                         if (segment_bytes == 1)
                             av_log(s->avctx, AV_LOG_ERROR, "Length information for a HT-codeblock is invalid\n");
                     } else {
-                        // new pass = 1 means npasses is HT SigProp; 2 means npasses is
+                        // newpasses = 1 means npasses is HT SigProp; 2 means newpasses is
                         // HT MagRef pass
                         if (newpasses > 1)
                             segment_passes = 3 - segment_passes;
@@ -1238,6 +1248,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     }
                     bits_to_read = (uint8_t) (bits_to_read + cblk->lblock);
                     segment_bytes = get_bits(s, bits_to_read);
+                    // Write length information for HT Refinment segment
+                    cblk->pass_lengths[1] += segment_bytes; ////////////////////////////////////////////////
                 } else if (!(cblk->modes & (JPEG2000_CBLK_TERMALL | JPEG2000_CBLK_BYPASS))) {
                     // Common case for non-HT code-blocks; we have only one segment
                     bits_to_read = (uint8_t) cblk->lblock + av_log2((uint8_t) newpasses);
@@ -1253,7 +1265,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 } else {
                     // BYPASS MODE
                     bypass_term_threshold = 10;
-                    assert(bits_to_read == 0);
+                    if(bits_to_read != 0)
+                        av_log(s->avctx, AV_LOG_ERROR, "Length information for a codeblock is invalid\n");
                     if (cblk->npasses < bypass_term_threshold) {
                         // May have from 1 to 10 uninterrupted passes before 1st RAW SigProp
                         segment_passes = bypass_term_threshold - cblk->npasses;
@@ -1263,8 +1276,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                             bits_to_read++;
                         next_segment_passes = 2;
                     } else if ((cblk->npasses - bypass_term_threshold) % 3 < 2) {
-                        // newpasses = 0 means `npasses' is a RAW SigProp; 1 means
-                        // `npasses' is a RAW MagRef pass
+                        // 0 means newpasses is a RAW SigProp; 1 means newpasses is a RAW MagRef pass
                         if (newpasses > 1)
                             segment_passes = 2 - (cblk->npasses - bypass_term_threshold) % 3;
                         else
@@ -1272,8 +1284,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         bits_to_read = (uint8_t) (segment_passes - 1);
                         next_segment_passes = 1;
                     } else {
-                        // `npasses' is an isolated Cleanup pass that precedes a RAW
-                        // SigProp pass
+                        // newpasses is an isolated Cleanup pass that precedes a RAW SigProp pass
                         segment_passes = 1;
                         next_segment_passes = 2;
                     }
@@ -1283,11 +1294,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 // Update cblk->npasses and write length information
                 cblk->npasses = (uint8_t) (cblk->npasses + segment_passes);
                 segment_length[nb_segments++] = segment_bytes;
-                // Write length information for HT CleanUp segment
-                if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) == JPEG2000_CTSY_HTJ2K_F && !cblk->pass_lengths[0])
-                    cblk->pass_lengths[0] = segment_bytes;
 
-                if ((cblk->modes & (JPEG2000_CTSY_HTJ2K_F | HT_PLHD)) == JPEG2000_CTSY_HTJ2K_F) {
+                if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) && cblk->plhd_flag == HT_PLHD_OFF) {
                     newpasses -= (uint8_t) segment_passes;
                     primary_passes = (uint8_t) (segment_passes + cblk->fast_skip_passes);
                     cblk->fast_skip_passes = 0;
@@ -1309,11 +1317,14 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         newpasses -= (uint8_t) (segment_passes);
                         if (next_segment_passes == 2) {
                             // This is a FAST Cleanup pass
-                            assert(segment_passes == 1);
+                            if(segment_passes != 1)
+                                av_log(s->avctx, AV_LOG_ERROR, "Number of HT cleanup pass shall be one.\n");
                             if (segment_bytes != 0) {
                                 // This will have to be the new primary
                                 if (segment_bytes < 2)
                                     av_log(s->avctx, AV_LOG_ERROR, "Length information for a HT-codeblock is invalid\n");
+                                // Write length information for HT CleanUp segment
+                                cblk->pass_lengths[0] = segment_bytes; ////////////////////////////////////////////////
                                 fast_skip_bytes += primary_bytes + secondary_bytes;
                                 primary_passes++;
                                 primary_passes = (uint8_t) (primary_passes + secondary_passes);
@@ -1337,6 +1348,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                             } else {
                                 secondary_passes = (uint8_t) (segment_passes);
                                 secondary_bytes = segment_bytes;
+                                // Write length information for HT Refinement segment
+                                cblk->pass_lengths[1] += segment_bytes; ////////////////////////////////////////////////
                             }
                         }
                         // Update cblk->npasses and write length information
@@ -1354,7 +1367,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                             next_segment_passes = (uint8_t) (3 - next_segment_passes);
                             bits_to_read = (uint8_t) (cblk->lblock + (unsigned int) (segment_passes) - 1);
                         } else {
-                            assert((cblk->modes & JPEG2000_CBLK_TERMALL) != 0);
+                            if ((cblk->modes & JPEG2000_CBLK_TERMALL) == 0)
+                                av_log(s->avctx, AV_LOG_ERROR, "Corrupted packet header is found.\n");
                             segment_passes = 1;
                             bits_to_read = (uint8_t) (cblk->lblock);
                         }
@@ -1366,10 +1380,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         segment_length[nb_segments++] = segment_bytes;
                         cblk->nb_terminationsinc++;
                     }
-                }
-                // Write length information for HT MagRef segment
-                if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) == JPEG2000_CTSY_HTJ2K_F) {
-                    cblk->pass_lengths[1] = segment_bytes;
                 }
 
                 for (int i = 0; i < nb_segments; ++i)
@@ -1395,7 +1405,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         cblk->pass_lengths[0] += segment_bytes;
                 }
             } else {
-                // This cblk has no contribution to the current packet
+                // This codeblock has no contribution to the current packet
                 continue;
             }
         }
