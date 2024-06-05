@@ -1003,18 +1003,11 @@ static int getlblockinc(Jpeg2000DecoderContext *s)
 static inline void select_header(Jpeg2000DecoderContext *s, const Jpeg2000Tile *tile,
                                  int *tp_index)
 {
-    int32_t is_endof_tp;
-
     s->g = tile->tile_part[*tp_index].header_tpg;
-    is_endof_tp = bytestream2_get_bytes_left(&s->g) == 0 && s->bit_index == 8;
-    // Following while loop is necessary because a tilepart may include only SOD marker.
-    // Such a tilepart has neither packet header nor compressed data.
-    while (is_endof_tp) {
+    if (bytestream2_get_bytes_left(&s->g) == 0 && s->bit_index == 8) {
+        av_log(s->avctx, AV_LOG_WARNING, "Packet header bytes in PPM marker segment is too short.\n");
         if (*tp_index < FF_ARRAY_ELEMS(tile->tile_part) - 1) {
-            s->g = tile->tile_part[++(*tp_index)].header_tpg;
-            is_endof_tp = bytestream2_get_bytes_left(&s->g) == 0 && s->bit_index == 8;
-        } else {
-            is_endof_tp = 0;
+            s->g = tile->tile_part[++(*tp_index)].tpg;
         }
     }
 }
