@@ -160,23 +160,23 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *ar
 
     if (buffer->pos >= 3) {  // Common case; we have at least 4 bytes available
          tmp = array[buffer->pos - 3];
-         tmp = (tmp << 8) | array[buffer->pos - 2];
-         tmp = (tmp << 8) | array[buffer->pos - 1];
-         tmp = (tmp << 8) | array[buffer->pos];
-         tmp = (tmp << 8) | buffer->last;  // For stuffing bit detection
+         tmp = tmp << 8 | array[buffer->pos - 2];
+         tmp = tmp << 8 | array[buffer->pos - 1];
+         tmp = tmp << 8 | array[buffer->pos];
+         tmp = tmp << 8 | buffer->last;  // For stuffing bit detection
          buffer->pos -= 4;
     } else {
         if (buffer->pos >= 2) {
             tmp = array[buffer->pos - 2];
         }
         if (buffer->pos >= 1) {
-            tmp = (tmp << 8) | array[buffer->pos - 1];
+            tmp = tmp << 8 | array[buffer->pos - 1];
         }
         if (buffer->pos >= 0) {
-            tmp = (tmp << 8) | array[buffer->pos];
+            tmp = tmp << 8 | array[buffer->pos];
         }
         buffer->pos = 0;
-        tmp = (tmp << 8) | buffer->last;  // For stuffing bit detection
+        tmp = tmp << 8 | buffer->last;  // For stuffing bit detection
     }
     // Now remove any stuffing bits, shifting things down as we go
     if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
@@ -1045,7 +1045,7 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
         for (int i = i_s; i < i_s + height; i++) {
             int modify_state;
             uint8_t bit;
-            uint8_t causal_cond = (is_causal == 0) || i != (i_s + height - 1);
+            uint8_t causal_cond = (is_causal == 0) || (i != (i_s + height - 1));
             int32_t *sp = &sample_buf[j + (i * (stride))];
             uint8_t mbr = 0;
 
