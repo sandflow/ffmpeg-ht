@@ -1233,9 +1233,6 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     av_assert0(width * height <= 4096);
     av_assert0(width * height > 0);
 
-    if (roi_shift)
-        avpriv_report_missing_feature(s->avctx, "ROI shift");
-
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
 
@@ -1333,11 +1330,13 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
             val = sample_buf[x + (y * quad_buf_width)];
             sign = val & INT32_MIN;
             val &= INT32_MAX;
+            /* ROI shift, if necessary */
             if (roi_shift && (((uint32_t)val & ~mask) == 0))
                 val <<= roi_shift;
+            /* Convert sign-magnitude to two's complement. */
             if (sign)
                 val = -val;
-            /* Convert sign-magnitude to two's complement. */
+            /* Shift down to 1 bit upper from decimal point for reconstruction value (= 0.5) */
             val >>= (pLSB - 1);
             t1->data[n] = val;
         }
