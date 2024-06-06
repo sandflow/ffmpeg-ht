@@ -1104,7 +1104,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
 
             if (incl) {
                 int nb_segments = 0;
-                uint16_t *segment_length = NULL;
+                uint16_t *segment_length = tile->segment_length;
                 uint8_t bypass_term_threshold = 0;
                 uint8_t bits_to_read = 0;
                 uint8_t pass_index = cblk->npasses;
@@ -1118,10 +1118,8 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 int empty_set;
                 uint32_t tmp_length = 0;
 
-                if ((newpasses = getnpasses(s)) < 0)
+                if ((newpasses = getnpasses(s)) <= 0)
                     return newpasses;
-                if(newpasses <= 0)
-                    av_log(s->avctx, AV_LOG_ERROR, "Invalid number of passes is found in the packet header.\n");
                 if (cblk->npasses + newpasses >= JPEG2000_MAX_PASSES) {
                     avpriv_request_sample(s->avctx, "Too many passes");
                     return AVERROR_PATCHWELCOME;
@@ -1145,8 +1143,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     return AVERROR(ENOMEM);
                 cblk->data_start = tmp;
                 cblk->lblock += llen;
-
-                segment_length = av_calloc(newpasses, sizeof(uint16_t));
 
                 if (cblk->ht_plhd) {
                     href_passes = (pass_index + newpasses - 1) % 3;

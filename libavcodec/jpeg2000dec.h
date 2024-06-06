@@ -68,6 +68,7 @@ typedef struct Jpeg2000Tile {
     GetByteContext      packed_headers_stream;  // byte context corresponding to packed headers
     uint16_t tp_idx;                    // Tile-part index
     int coord[2][2];                    // border coordinates {{x0, x1}, {y0, y1}}
+    uint16_t            segment_length[JPEG2000_MAX_PASSES];
 } Jpeg2000Tile;
 
 typedef struct Jpeg2000DecoderContext {

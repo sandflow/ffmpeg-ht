@@ -193,7 +193,7 @@ typedef struct Jpeg2000Cblk {
     int zbp;
     int pass_lengths[2];
     uint8_t modes; // copy of SPcod/SPcoc field to parse HT-MIXED mode
-    uint8_t ht_plhd;
+    uint8_t ht_plhd; // are we looking for HT placeholder passes?
     uint8_t fast_skip_passes; // required to parse multiple HT-sets
 } Jpeg2000Cblk; // code block
 
