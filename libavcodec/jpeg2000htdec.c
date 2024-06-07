@@ -1046,11 +1046,11 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
             int32_t *sp = &sample_buf[j + (i * (stride))];
             uint8_t mbr = 0;
 
-            if (jpeg2000_get_state(i, j, stride - 0, HT_SHIFT_SIGMA, block_states) == 0)
+            if (jpeg2000_get_state(i, j, stride, HT_SHIFT_SIGMA, block_states) == 0)
                 jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride);
             mbr_info >>= 3;
 
-            modify_state = block_states[(i+1)*stride + (j+1)];
+            modify_state = block_states[(i + 1) * stride + (j + 1)];
             modify_state |= 1 << HT_SHIFT_SCAN;
             if (mbr != 0) {
                 modify_state |= 1 << HT_SHIFT_REF_IND; 
@@ -1189,7 +1189,7 @@ int
 ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk,
                          int width, int height, int magp, uint8_t roi_shift)
 {
-    uint8_t p0 = 0;             // 3*p0 = Number of placeholder passes
+    uint8_t p0 = 0;             // 3 * p0 = Number of placeholder passes
     uint32_t Lcup;              // Length of HT cleanup segment
     uint32_t Lref;              // Length of Refinement segment
     uint32_t Scup;              // HT cleanup segment suffix length
@@ -1238,10 +1238,7 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
         return 0;
 
     num_rempass = cblk->npasses % 3;  // Number of remainder passes
-    if (num_rempass)
-        num_plhd_passes = cblk->npasses - num_rempass;
-    else
-        num_plhd_passes = cblk->npasses - 3;
+    num_plhd_passes = num_rempass ? cblk->npasses - num_rempass : cblk->npasses - 3;;
     av_assert0(num_plhd_passes % 3 == 0);
     p0 = num_plhd_passes / 3;
     z_blk = cblk->npasses - num_plhd_passes;
