@@ -1295,9 +1295,9 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         bits_to_read = (uint8_t) (cblk->lblock + av_log2(segment_passes));
                         segment_bytes = get_bits(s, bits_to_read);
                         newpasses -= (uint8_t) (segment_passes);
-                            // This is a FAST Refinement pass
-                                // Write length information for HT Refinement segment
-                                cblk->pass_lengths[1] += segment_bytes; 
+                        // This is a FAST Refinement pass
+                        // Write length information for HT Refinement segment
+                        cblk->pass_lengths[1] += segment_bytes;
                         // Update cblk->npasses and write length information
                         cblk->npasses = (uint8_t) (cblk->npasses + segment_passes);
                         segment_length[nb_segments++] = segment_bytes;
