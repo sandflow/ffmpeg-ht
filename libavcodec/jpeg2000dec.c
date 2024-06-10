@@ -1103,8 +1103,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
             }
 
             if (incl) {
-                int nb_segments = 0;
-                uint16_t *segment_length = tile->segment_length;
                 uint8_t bypass_term_threshold = 0;
                 uint8_t bits_to_read = 0;
                 uint32_t segment_bytes = 0;
@@ -1128,7 +1126,10 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 }
                 cblk->nb_lengthinc = 0;
                 cblk->nb_terminationsinc = 0;
-
+                av_free(cblk->lengthinc);
+                cblk->lengthinc = av_calloc(newpasses, sizeof(*cblk->lengthinc));
+                if (!cblk->lengthinc)
+                    return AVERROR(ENOMEM);
                 tmp = av_realloc_array(cblk->data_start, cblk->nb_terminations + newpasses + 1,
                                        sizeof(*cblk->data_start));
                 if (!tmp)
@@ -1282,7 +1283,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 }
                 // Update cblk->npasses and write length information
                 cblk->npasses = (uint8_t) (cblk->npasses + segment_passes);
-                segment_length[nb_segments++] = segment_bytes;
+                cblk->lengthinc[cblk->nb_lengthinc++] = segment_bytes;
 
                 if ((cblk->modes & JPEG2000_CTSY_HTJ2K_F) && cblk->ht_plhd == HT_PLHD_OFF) {
                     newpasses -= (uint8_t) segment_passes;
@@ -1297,7 +1298,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         cblk->pass_lengths[1] += segment_bytes;
                         // Update cblk->npasses and write length information
                         cblk->npasses = (uint8_t) (cblk->npasses + segment_passes);
-                        segment_length[nb_segments++] = segment_bytes;
+                        cblk->lengthinc[cblk->nb_lengthinc++] = segment_bytes;
                     }
                 } else {
                     newpasses -= (uint8_t) (segment_passes);
@@ -1317,13 +1318,13 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
 
                         // Update cblk->npasses and write length information
                         cblk->npasses = (uint8_t) (cblk->npasses + segment_passes);
-                        segment_length[nb_segments++] = segment_bytes;
+                        cblk->lengthinc[cblk->nb_lengthinc++] = segment_bytes;
                         cblk->nb_terminationsinc++;
                     }
                 }
 
-                for (int i = 0; i < nb_segments; ++i)
-                    tmp_length = (tmp_length < segment_length[i]) ? segment_length[i] : tmp_length;
+                for (int i = 0; i < cblk->nb_lengthinc; ++i)
+                    tmp_length = (tmp_length < cblk->lengthinc[i]) ? cblk->lengthinc[i] : tmp_length;
 
                 if (tmp_length > cblk->data_allocated) {
                     size_t new_size = FFMAX(2 * cblk->data_allocated, tmp_length);
@@ -1338,11 +1339,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                                         "Block with lengthinc greater than %"SIZE_SPECIFIER"",
                                         cblk->data_allocated);
                     return AVERROR_PATCHWELCOME;
-                }
-                for (int i = 0; i < nb_segments; ++i) {
-                    cblk->lengthinc[cblk->nb_lengthinc++] = segment_length[i];
-                    if (!(cblk->modes & JPEG2000_CTSY_HTJ2K_F))
-                        cblk->pass_lengths[0] += segment_bytes;
                 }
             } else {
                 // This codeblock has no contribution to the current packet
@@ -1374,7 +1370,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
         nb_code_blocks = prec->nb_codeblocks_height * prec->nb_codeblocks_width;
         for (cblkno = 0; cblkno < nb_code_blocks; cblkno++) {
             Jpeg2000Cblk *cblk = prec->cblk + cblkno;
-            if (!cblk->nb_terminationsinc && !cblk->nb_lengthinc)
+            if (!cblk->nb_terminationsinc && !cblk->lengthinc)
                 continue;
             for (cwsno = 0; cwsno < cblk->nb_lengthinc; cwsno ++) {
                 if (cblk->data_allocated < cblk->length + cblk->lengthinc[cwsno] + 4) {
@@ -1405,6 +1401,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     cblk->data_start[cblk->nb_terminations] = cblk->length;
                 }
             }
+            av_freep(&cblk->lengthinc);
         }
     }
     // Save state of stream
