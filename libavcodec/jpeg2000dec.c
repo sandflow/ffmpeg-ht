@@ -1128,10 +1128,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 }
                 cblk->nb_lengthinc = 0;
                 cblk->nb_terminationsinc = 0;
-                av_free(cblk->lengthinc);
-                cblk->lengthinc = av_calloc(newpasses, sizeof(*cblk->lengthinc));
-                if (!cblk->lengthinc)
-                    return AVERROR(ENOMEM);
+
                 tmp = av_realloc_array(cblk->data_start, cblk->nb_terminations + newpasses + 1,
                                        sizeof(*cblk->data_start));
                 if (!tmp)
@@ -1377,7 +1374,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
         nb_code_blocks = prec->nb_codeblocks_height * prec->nb_codeblocks_width;
         for (cblkno = 0; cblkno < nb_code_blocks; cblkno++) {
             Jpeg2000Cblk *cblk = prec->cblk + cblkno;
-            if (!cblk->nb_terminationsinc && !cblk->lengthinc)
+            if (!cblk->nb_terminationsinc && !cblk->nb_lengthinc)
                 continue;
             for (cwsno = 0; cwsno < cblk->nb_lengthinc; cwsno ++) {
                 if (cblk->data_allocated < cblk->length + cblk->lengthinc[cwsno] + 4) {
@@ -1408,7 +1405,6 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     cblk->data_start[cblk->nb_terminations] = cblk->length;
                 }
             }
-            av_freep(&cblk->lengthinc);
         }
     }
     // Save state of stream

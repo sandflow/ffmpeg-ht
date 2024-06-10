@@ -178,7 +178,7 @@ typedef struct Jpeg2000Cblk {
     uint8_t nonzerobits;
     uint8_t incl;
     uint16_t length;
-    uint16_t *lengthinc;
+    uint16_t lengthinc[JPEG2000_MAX_PASSES];
     uint8_t nb_lengthinc;
     uint8_t lblock;
     uint8_t *data;
