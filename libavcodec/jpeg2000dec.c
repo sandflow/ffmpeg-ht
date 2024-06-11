@@ -1122,13 +1122,13 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 if (incl) {
                     int zbp = tag_tree_decode(s, prec->zerobits + cblkno, 100);
                     int v = expn[bandno] + numgbits - 1 - (zbp - tile->comp->roi_shift);
-                        if (v < 0 || v > 30) {
-                            av_log(s->avctx, AV_LOG_ERROR,
-                                   "nonzerobits %d invalid or unsupported\n", v);
-                            return AVERROR_INVALIDDATA;
-                        }
+                    if (v < 0 || v > 30) {
+                        av_log(s->avctx, AV_LOG_ERROR,
+                               "nonzerobits %d invalid or unsupported\n", v);
+                        return AVERROR_INVALIDDATA;
+                    }
                     cblk->incl = 1;
-                        cblk->nonzerobits = v;
+                    cblk->nonzerobits = v;
                     cblk->zbp = zbp;
                     cblk->lblock = 3;
                 }
@@ -1191,7 +1191,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                                 cblk->modes &= (uint8_t) (~(JPEG2000_CTSY_HTJ2K_F));
                             }
                             else {
-                            av_log(s->avctx, AV_LOG_WARNING, "Length information for a HT-codeblock is invalid\n");
+                                av_log(s->avctx, AV_LOG_WARNING, "Length information for a HT-codeblock is invalid\n");
                             }
                         }
                     } else {
@@ -1209,14 +1209,14 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                                 next_segment_passes = 2;
                                 cblk->ht_plhd = HT_PLHD_OFF;
                                 // Write length information for HT CleanUp segment
-                                cblk->pass_lengths[0] = segment_bytes; 
+                                cblk->pass_lengths[0] = segment_bytes;
                             } else if (cblk->lblock > 3 && segment_bytes > 1
                                        && (segment_bytes >> (bits_to_read - 1)) == 0) {
                                 // Must be the first HT Cleanup pass, since length MSB is 0
                                 next_segment_passes = 2;
                                 cblk->ht_plhd = HT_PLHD_OFF;
                                 // Write length information for HT CleanUp segment
-                                cblk->pass_lengths[0] = segment_bytes; 
+                                cblk->pass_lengths[0] = segment_bytes;
                             } else {
                                 // Must have an original (non-HT) block coding pass
                                 cblk->modes &= (uint8_t) (~(JPEG2000_CTSY_HTJ2K_F));
@@ -1280,7 +1280,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     bits_to_read = (uint8_t) (bits_to_read + cblk->lblock);
                     segment_bytes = get_bits(s, bits_to_read);
                     // Write length information for HT Refinment segment
-                    cblk->pass_lengths[1] += segment_bytes; 
+                    cblk->pass_lengths[1] += segment_bytes;
                 } else if (!(cblk->modes & (JPEG2000_CBLK_TERMALL | JPEG2000_CBLK_BYPASS))) {
                     // Common case for non-HT code-blocks; we have only one segment
                     bits_to_read = (uint8_t) cblk->lblock + av_log2((uint8_t) newpasses);
