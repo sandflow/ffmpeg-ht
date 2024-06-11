@@ -37,12 +37,14 @@
 
 enum Jpeg2000Markers {
     JPEG2000_SOC = 0xff4f, // start of codestream
+    JPEG2000_CAP = 0xff50, // extended capabilities
     JPEG2000_SIZ = 0xff51, // image and tile size
     JPEG2000_COD,          // coding style default
     JPEG2000_COC,          // coding style component
     JPEG2000_TLM = 0xff55, // tile-part length, main header
     JPEG2000_PLM = 0xff57, // packet length, main header
     JPEG2000_PLT,          // packet length, tile-part header
+    JPEG2000_CPF,          // corresponding profile
     JPEG2000_QCD = 0xff5c, // quantization default
     JPEG2000_QCC,          // quantization component
     JPEG2000_RGN,          // region of interest
