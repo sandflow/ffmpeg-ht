@@ -60,6 +60,12 @@ enum Jpeg2000Markers {
     JPEG2000_EOC = 0xffd9, // end of codestream
 };
 
+enum JPEG2000_Ccap15_b14_15_params {
+    HTJ2K_HTONLY = 0,      // HTONLY, bit 14 and 15 are 0
+    HTJ2K_HTDECLARED,      // HTDECLARED, bit 14 = 1 and bit 15 = 0
+    HTJ2K_MIXED = 3,       // MIXED, bit 14 and 15 are 1
+};
+
 #define JPEG2000_SOP_FIXED_BYTES 0xFF910004
 #define JPEG2000_SOP_BYTE_LENGTH 6
 

@@ -1187,7 +1187,7 @@ jpeg2000_decode_magref_segment( uint16_t width, uint16_t block_height, const int
 
 int
 ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk,
-                         int width, int height, int magp, uint8_t roi_shift)
+                         int width, int height, int M_b, uint8_t roi_shift)
 {
     uint8_t p0 = 0;             // 3 * p0 = Number of placeholder passes
     uint32_t Lcup;              // Length of HT cleanup segment
@@ -1219,7 +1219,6 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     uint8_t *block_states = NULL;
 
     int32_t n, val;             // Post-processing
-    int32_t M_b = magp;
     const uint32_t mask  = UINT32_MAX >> (M_b + 1); // bit mask for ROI detection
     uint8_t num_rempass;
 
