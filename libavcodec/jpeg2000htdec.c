@@ -1237,7 +1237,7 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
         return 0;
 
     num_rempass = cblk->npasses % 3;  // Number of remainder passes
-    num_plhd_passes = num_rempass ? cblk->npasses - num_rempass : cblk->npasses - 3;;
+    num_plhd_passes = num_rempass ? cblk->npasses - num_rempass : cblk->npasses - 3;
     av_assert0(num_plhd_passes % 3 == 0);
     p0 = num_plhd_passes / 3;
     z_blk = cblk->npasses - num_plhd_passes;

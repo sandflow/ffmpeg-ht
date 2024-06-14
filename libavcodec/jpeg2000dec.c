@@ -55,8 +55,10 @@
 #define HAD_QCC 0x02
 
 // Values of flag for placeholder passes
-#define HT_PLHD_ON 1
-#define HT_PLHD_OFF 0
+enum HT_PLHD_STATUS {
+    HT_PLHD_OFF,
+    HT_PLHD_ON
+};
 
 #define HT_MIXED 0x80 // bit 7 of SPcod/SPcoc
 
@@ -432,16 +434,13 @@ static int get_cap(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     Pcap = bytestream2_get_be32u(&s->g);
+    s->isHT = (Pcap >> (31 - (15 - 1))) & 1;
     for (int i = 0; i < 32; i++) {
         if ((Pcap >> (31 - i)) & 1)
             Ccap_i[i] = bytestream2_get_be16u(&s->g);
     }
     Ccap_15 = Ccap_i[14];
-    if (!Ccap_15) {
-        av_log(s->avctx, AV_LOG_ERROR, "Wrong Ccap_15 value\n");
-        return AVERROR_INVALIDDATA;
-    }
-    s->isHT = 1;
+    if (s->isHT == 1) {
     av_log(s->avctx, AV_LOG_INFO, "This is an HTJ2K codestream.\n");
     // Bits 14-15
     switch ((Ccap_15 >> 14) & 0x3) {
@@ -455,7 +454,7 @@ static int get_cap(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
             s->Ccap15_b14_15 = HTJ2K_HTONLY;
             break;
         default:
-            av_log(s->avctx, AV_LOG_ERROR, "Bits 14-15 of Ccap_15 is wrong.\n");
+                av_log(s->avctx, AV_LOG_ERROR, "Unknown CCap value.\n");
             return AVERROR(EINVAL);
             break;
     }
@@ -482,8 +481,9 @@ static int get_cap(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
         s->HT_MAGB = 74;
 
     if (s->HT_MAGB > 31) {
-        av_log(s->avctx, AV_LOG_ERROR, "MAGB value > 31 exceeds the internal precision.\n");
+            av_log(s->avctx, AV_LOG_ERROR, "Available internal precision is exceeded (MAGB> 31).\n");
         return AVERROR_PATCHWELCOME;
+    }
     }
     return 0;
 }
@@ -1319,10 +1319,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                     } else {
                         // newpasses = 1 means npasses is HT SigProp; 2 means newpasses is
                         // HT MagRef pass
-                        if (newpasses > 1)
-                            segment_passes = 3 - segment_passes;
-                        else
-                            segment_passes = 1;
+                        segment_passes = newpasses > 1 ? 3 - segment_passes : 1;
                         next_segment_passes = 1;
                         bits_to_read = av_log2(segment_passes);
                     }
@@ -1357,10 +1354,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                         next_segment_passes = 2;
                     } else if ((cblk->npasses - bypass_term_threshold) % 3 < 2) {
                         // 0 means newpasses is a RAW SigProp; 1 means newpasses is a RAW MagRef pass
-                        if (newpasses > 1)
-                            segment_passes = 2 - (cblk->npasses - bypass_term_threshold) % 3;
-                        else
-                            segment_passes = 1;
+                        segment_passes = newpasses > 1 ? 2 - (cblk->npasses - bypass_term_threshold) % 3 : 1;
                         bits_to_read = av_log2(segment_passes);
                         next_segment_passes = 1;
                     } else {
@@ -2453,8 +2447,7 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             break;
         case JPEG2000_CAP:
             if (!s->ncomponents) {
-                av_log(s->avctx, AV_LOG_ERROR, "CAP marker segment shall come after SIZ\n");
-                return AVERROR_INVALIDDATA;
+                av_log(s->avctx, AV_LOG_WARNING, "CAP marker segment shall come after SIZ\n");
             }
             ret = get_cap(s, codsty);
             break;
