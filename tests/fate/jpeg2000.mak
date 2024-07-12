@@ -60,8 +60,128 @@ fate-jpeg2000dec-p0_15: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpe
 FATE_JPEG2000DEC += fate-jpeg2000dec-p0_16
 fate-jpeg2000dec-p0_16: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile0/p0_16.j2k
 
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_01
+fate-jpeg2000dec-p1_01: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_01.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_02
+fate-jpeg2000dec-p1_02: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_02.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_03
+fate-jpeg2000dec-p1_03: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_03.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_04
+fate-jpeg2000dec-p1_04: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_04.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_05
+fate-jpeg2000dec-p1_05: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_05.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-p1_06
+fate-jpeg2000dec-p1_06: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_06.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-hifi_ht1_02
+fate-jpeg2000dec-hifi_ht1_02: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/hifi_ht1_02.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-hifi_p1_02
+fate-jpeg2000dec-hifi_p1_02: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/hifi_p1_02.j2k
+
 FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_01_b11
-fate-jpeg2000dec-ds0_ht_01_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/ds0_ht_01_b11.j2k
+fate-jpeg2000dec-ds0_ht_01_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_01_bset/ds0_ht_01_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_02_b11
+fate-jpeg2000dec-ds0_ht_02_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_02_bset/ds0_ht_02_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_02_b12
+fate-jpeg2000dec-ds0_ht_02_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_02_bset/ds0_ht_02_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_03_b11
+fate-jpeg2000dec-ds0_ht_03_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_03_bset/ds0_ht_03_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_03_b14
+fate-jpeg2000dec-ds0_ht_03_b14: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_03_bset/ds0_ht_03_b14.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_04_b11
+fate-jpeg2000dec-ds0_ht_04_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_04_bset/ds0_ht_04_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_04_b12
+fate-jpeg2000dec-ds0_ht_04_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_04_bset/ds0_ht_04_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_05_b11
+fate-jpeg2000dec-ds0_ht_05_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_05_bset/ds0_ht_05_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_05_b12
+fate-jpeg2000dec-ds0_ht_05_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_05_bset/ds0_ht_05_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_07_b11
+fate-jpeg2000dec-ds0_ht_07_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_07_bset/ds0_ht_07_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_07_b15
+fate-jpeg2000dec-ds0_ht_07_b15: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_07_bset/ds0_ht_07_b15.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_07_b16
+fate-jpeg2000dec-ds0_ht_07_b16: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_07_bset/ds0_ht_07_b16.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_08_b11
+fate-jpeg2000dec-ds0_ht_08_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_08_bset/ds0_ht_08_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_08_b15
+fate-jpeg2000dec-ds0_ht_08_b15: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_08_bset/ds0_ht_08_b15.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_08_b16
+fate-jpeg2000dec-ds0_ht_08_b16: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_08_bset/ds0_ht_08_b16.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_09_b11
+fate-jpeg2000dec-ds0_ht_09_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_09_bset/ds0_ht_09_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_10_b11
+fate-jpeg2000dec-ds0_ht_10_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_10_bset/ds0_ht_10_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_11_b10
+fate-jpeg2000dec-ds0_ht_11_b10: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_11_bset/ds0_ht_11_b10.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_12_b11
+fate-jpeg2000dec-ds0_ht_12_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_12_bset/ds0_ht_12_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_14_b11
+fate-jpeg2000dec-ds0_ht_14_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_14_bset/ds0_ht_14_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_hm_15_b8
+fate-jpeg2000dec-ds0_hm_15_b8: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_15_bset/ds0_hm_15_b8.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_15_b11
+fate-jpeg2000dec-ds0_ht_15_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_15_bset/ds0_ht_15_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_15_b14
+fate-jpeg2000dec-ds0_ht_15_b14: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_15_bset/ds0_ht_15_b14.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds0_ht_16_b11
+fate-jpeg2000dec-ds0_ht_16_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile0/p0_16_bset/ds0_ht_16_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_01_b11
+fate-jpeg2000dec-ds1_ht_01_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_01_bset/ds1_ht_01_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_01_b12
+fate-jpeg2000dec-ds1_ht_01_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_01_bset/ds1_ht_01_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_02_b11
+fate-jpeg2000dec-ds1_ht_02_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_02_bset/ds1_ht_02_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_02_b12
+fate-jpeg2000dec-ds1_ht_02_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_02_bset/ds1_ht_02_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_03_b11
+fate-jpeg2000dec-ds1_ht_03_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_03_bset/ds1_ht_03_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_03_b12
+fate-jpeg2000dec-ds1_ht_03_b12: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_03_bset/ds1_ht_03_b12.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_04_b9
+fate-jpeg2000dec-ds1_ht_04_b9: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_04_bset/ds1_ht_04_b9.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_05_b11
+fate-jpeg2000dec-ds1_ht_05_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_05_bset/ds1_ht_05_b11.j2k
+
+FATE_JPEG2000DEC += fate-jpeg2000dec-ds1_ht_06_b11
+fate-jpeg2000dec-ds1_ht_06_b11: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/htj2k_bsets_profile1/p1_06_bset/ds1_ht_06_b11.j2k
 
 FATE_JPEG2000DEC += $(FATE_JPEG2000DEC-yes)
 
