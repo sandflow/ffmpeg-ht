@@ -167,7 +167,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *ar
          buffer->pos -= 4;
     } else {
         if (buffer->pos >= 2)
-            tmp = array[buffer->pos - 2]; 
+            tmp = array[buffer->pos - 2];
         if (buffer->pos >= 1)
             tmp = (tmp << 8) | array[buffer->pos - 1];
         if (buffer->pos >= 0)
@@ -1053,10 +1053,10 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
             modify_state = block_states[(i + 1) * stride + (j + 1)];
             modify_state |= 1 << HT_SHIFT_SCAN;
             if (mbr != 0) {
-                modify_state |= 1 << HT_SHIFT_REF_IND; 
+                modify_state |= 1 << HT_SHIFT_REF_IND;
                 bit = jpeg2000_peek_bit(sig_prop, magref_segment, magref_length);
-                modify_state |= bit << HT_SHIFT_REF; 
-                *sp |= bit << pLSB; 
+                modify_state |= bit << HT_SHIFT_REF;
+                *sp |= bit << pLSB;
                 *sp |= bit << (pLSB - 1); // Add 0.5 (reconstruction parameter = 1/2)
             }
             jpeg2000_modify_state(i, j, stride, modify_state, block_states);
@@ -1220,7 +1220,7 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
 
     int32_t n, val;             // Post-processing
     const uint32_t mask  = UINT32_MAX >> (M_b + 1); // bit mask for ROI detection
-    
+
     uint8_t num_rempass;
 
     const int quad_buf_width = width + 4;
