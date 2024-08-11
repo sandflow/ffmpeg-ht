@@ -28,6 +28,10 @@
  */
 
 #include <stdint.h>
+#include "config.h"
+#if HAVE_AVX2
+#include <x86intrin.h>
+#endif
 
 #define FF_DWT_MAX_DECLVLS 32 ///< max number of decomposition levels
 #define F_LFTG_K      1.230174104914001f
@@ -44,11 +48,26 @@ typedef struct DWTContext {
     /// line lengths { horizontal, vertical } in consecutive decomposition levels
     int linelen[FF_DWT_MAX_DECLVLS][2];
     uint8_t mod[FF_DWT_MAX_DECLVLS][2];  ///< coordinates (x0, y0) of decomp. levels mod 2
+    uint32_t u0[FF_DWT_MAX_DECLVLS][4];
+    uint32_t v0[FF_DWT_MAX_DECLVLS][4];
+    uint32_t u1[FF_DWT_MAX_DECLVLS][4];
+    uint32_t v1[FF_DWT_MAX_DECLVLS][4];
+    uint32_t u[FF_DWT_MAX_DECLVLS][2];
+    uint32_t v[FF_DWT_MAX_DECLVLS][2];
     uint8_t ndeclevels;                  ///< number of decomposition levels
     uint8_t type;                        ///< 0 for 9/7; 1 for 5/3
     int32_t *i_linebuf;                  ///< int buffer used by transform
     float   *f_linebuf;                  ///< float buffer used by transform
 } DWTContext;
+
+// symmetric extension
+static inline int32_t PSEo(const int32_t i, const int32_t i0, const int32_t i1) {
+    const int32_t tmp0    = 2 * (i1 - i0 - 1);
+    const int32_t tmp1    = ((i - i0) < 0) ? i0 - i : i - i0;
+    const int32_t mod_val = tmp1 % tmp0;
+    const int32_t min_val = mod_val < tmp0 - mod_val ? mod_val : tmp0 - mod_val;
+    return min_val;
+}
 
 /**
  * Initialize DWT.

@@ -260,9 +260,9 @@ static void init_band_stepsize(AVCodecContext *avctx,
                 band->f_stepsize *= F_LFTG_X * F_LFTG_X * 4;
                 break;
         }
-        if (codsty->transform == FF_DWT97) {
+        // if (codsty->transform == FF_DWT97) {
             band->f_stepsize *= pow(F_LFTG_K, 2*(codsty->nreslevels2decode - reslevelno) + lband - 2);
-        }
+        // }
     }
 
     if (band->f_stepsize > (INT_MAX >> 15)) {
@@ -270,7 +270,7 @@ static void init_band_stepsize(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "stepsize out of range\n");
     }
 
-    band->i_stepsize = band->f_stepsize * (1 << 15);
+    band->i_stepsize = band->f_stepsize * (1 << 15) + 0.5;
 
     /* FIXME: In OpenJPEG code stepsize = stepsize * 0.5. Why?
      * If not set output of entropic decoder is not correct. */
@@ -486,7 +486,25 @@ int ff_jpeg2000_init_component(Jpeg2000Component *comp,
         av_log(avctx, AV_LOG_ERROR, "nreslevels2decode %d invalid or uninitialized\n", codsty->nreslevels2decode);
         return AVERROR_INVALIDDATA;
     }
-
+    int32_t xob[4]    = {0, 1, 0, 1};
+    int32_t yob[4]    = {0, 0, 1, 1};
+    for (int32_t r = 0; r < codsty->nreslevels2decode; ++r) {
+        uint8_t nb        = codsty->nreslevels2decode - 1 - r;
+        if (r != 0) {
+            nb++;
+        }
+        uint8_t nb_1 = 0;
+        if (nb > 0) {
+            nb_1 = nb - 1;
+        }
+        int num_bands = r == 0 ? 1 : 4;
+        for (int b = 0; b < num_bands; ++b) {
+            comp->dwt.u0[r][b] = ff_jpeg2000_ceildiv(comp->coord[0][0] - (1U << (nb_1)) * xob[b], 1U << nb);
+            comp->dwt.v0[r][b] = ff_jpeg2000_ceildiv(comp->coord[1][0] - (1U << (nb_1)) * yob[b], 1U << nb);
+            comp->dwt.u1[r][b] = ff_jpeg2000_ceildiv(comp->coord[0][1] - (1U << (nb_1)) * xob[b], 1U << nb);
+            comp->dwt.v1[r][b] = ff_jpeg2000_ceildiv(comp->coord[1][1] - (1U << (nb_1)) * yob[b], 1U << nb);
+        }
+    }
     if (ret = ff_jpeg2000_dwt_init(&comp->dwt, comp->coord,
                                    codsty->nreslevels2decode - 1,
                                    codsty->transform))

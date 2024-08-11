@@ -2136,7 +2136,9 @@ static void dequantization_int_97(int x, int y, Jpeg2000Cblk *cblk,
         int32_t *datap = &comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
         for (i = 0; i < w; ++i)
-            datap[i] = (src[i] * (int64_t)band->i_stepsize + (1<<15)) >> 16;
+            // Shifting down to 1 bit above from the binary point.
+            // This is mandatory for FF_DWT97_INT to pass the conformance testing.
+            datap[i] = (src[i] * (int64_t)band->i_stepsize + (1 << 14)) >> 15;
     }
 }
 
@@ -2866,6 +2868,103 @@ static int jpeg2000_decode_frame(AVCodecContext *avctx, AVFrame *picture,
 
     avctx->execute2(avctx, jpeg2000_decode_tile, picture, NULL, s->numXtiles * s->numYtiles);
 
+#define PGXOUT
+#ifdef PGXOUT
+    int nc = s->ncomponents;
+    int cw[4], ch[4];
+    for (int c = 0; c < nc; c++) {
+        int x0 = ff_jpeg2000_ceildiv(s->image_offset_x, s->cdx[c]);
+        int y0 = ff_jpeg2000_ceildiv(s->image_offset_y, s->cdy[c]);
+        int x1 = ff_jpeg2000_ceildiv(s->width, s->cdx[c]);
+        int y1 = ff_jpeg2000_ceildiv(s->height, s->cdy[c]);
+        cw[c] = ff_jpeg2000_ceildiv(x1 - x0, 1 << s->reduction_factor);
+        ch[c] = ff_jpeg2000_ceildiv(y1 - y0, 1 << s->reduction_factor);
+    }
+    uint8_t *buf0 = NULL, *buf1 = NULL, *buf2 = NULL, *buf3 = NULL;
+    buf0 = av_malloc(cw[0]*ch[0]*(s->cbps[0] > 8 ? 2:1));
+    if (nc > 1)
+        buf1 = av_malloc(cw[1]*ch[1]*(s->cbps[1] > 8 ? 2:1));
+    if (nc > 2)
+        buf2 = av_malloc(cw[2]*ch[2]*(s->cbps[2] > 8 ? 2:1));
+    if (nc > 3)
+        buf3 = av_malloc(cw[3]*ch[3]*(s->cbps[3] > 8 ? 2:1));
+
+    uint8_t *bufs[4] = {buf0, buf1, buf2, buf3};
+    uint8_t nc4map[4] = {1, 2, 3, 0};
+    for (int c = 0; c < nc; c++) {
+        int bytes = s->cbps[c] > 8 ? 2 : 1;
+        int cidx = nc == 4 ? nc4map[c] : c;
+        for (int y = 0; y < ch[cidx]; ++y) {
+            uint8_t *src = picture->data[0] + c * bytes + y * picture->linesize[0];
+            if (nc == 4) {
+                src = picture->data[c] + y * picture->linesize[c];
+            }
+            for (int x = 0; x < cw[cidx]; ++x) {
+                uint8_t *dst = &bufs[c][bytes * (y * cw[c] + x)];
+                if (nc == 4) {
+                    dst = &bufs[cidx][bytes * (y * cw[cidx] + x)];
+                }
+                if (bytes == 1)
+                    dst[0] = src[0];
+                else {
+                    dst[0] = src[0];
+                    dst[1] = src[1];
+                }
+                if (nc != 4)
+                    src += bytes * nc;
+                else
+                    src++;
+            }
+        }
+    }
+    for (int c = 0; c < nc; c++) {
+        int bytes = s->cbps[c] > 8 ? 2 : 1;
+        uint8_t  *dstu8 = &bufs[c][0];
+        uint16_t  *dstu16 = (uint16_t *)&bufs[c][0];
+        int8_t  *dsts8 = &bufs[c][0];
+        int16_t  *dsts16 = (int16_t *)&bufs[c][0];
+        for (int y = 0; y < ch[c]; ++y) {
+            for (int x = 0; x < cw[c]; ++x) {
+                int val = 0;
+                if (bytes == 1) {
+                    dstu8[y * cw[c] + x] >>= (8*bytes - s->cbps[c]);
+                    dsts8[y * cw[c] + x] -= s->sgnd[c] * (1 << (s->cbps[c] - 1));
+                } else {
+                    dstu16[y * cw[c] + x] >>= (8*bytes - s->cbps[c]);
+                    dsts16[y * cw[c] + x] -= s->sgnd[c] * (1 << (s->cbps[c] - 1));
+                }
+            }
+        }
+    }
+    FILE *fp0, *fp1, *fp2, *fp3;
+    fp0 = fopen("./out-0.pgx", "wb");
+    fprintf(fp0, "PG LM %c%d %d %d\n", s->sgnd[0] ? '-' : '+', s->cbps[0], cw[0], ch[0]);
+    fwrite(bufs[0], sizeof(uint8_t), cw[0] * ch[0] * ((s->cbps[0] > 8) ? 2 : 1), fp0);
+    fclose(fp0);
+    if (nc > 1) {
+        fp1 = fopen("./out-1.pgx", "wb");
+        fprintf(fp1, "PG LM %c%d %d %d\n", s->sgnd[1] ? '-' : '+', s->cbps[1], cw[1], ch[1]);
+        fwrite(bufs[1], sizeof(uint8_t), cw[1] * ch[1] * ((s->cbps[1] > 8) ? 2 : 1), fp1);
+        fclose(fp1);
+    }
+    if (nc > 2) {
+        fp2 = fopen("./out-2.pgx", "wb");
+        fprintf(fp2, "PG LM %c%d %d %d\n", s->sgnd[2] ? '-' : '+', s->cbps[2], cw[2], ch[2]);
+        fwrite(bufs[2], sizeof(uint8_t), cw[2] * ch[2] * ((s->cbps[2] > 8) ? 2 : 1), fp2);
+        fclose(fp2);
+    }
+    if (nc > 3) {
+        fp3 = fopen("./out-3.pgx", "wb");
+        fprintf(fp3, "PG LM %c%d %d %d\n", s->sgnd[3] ? '-' : '+', s->cbps[3], cw[3], ch[3]);
+        fwrite(bufs[3], sizeof(uint8_t), cw[3] * ch[3] * ((s->cbps[3] > 8) ? 2 : 1), fp3);
+        fclose(fp3);
+    }
+
+    av_freep(&buf0);
+    av_freep(&buf1);
+    av_freep(&buf2);
+    av_freep(&buf3);
+#endif
     jpeg2000_dec_cleanup(s);
 
     *got_frame = 1;
