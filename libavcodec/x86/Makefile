@@ -55,7 +55,8 @@ OBJS-$(CONFIG_FLAC_ENCODER)            += x86/flacencdsp_init.o
 OBJS-$(CONFIG_OPUS_DECODER)            += x86/opusdsp_init.o
 OBJS-$(CONFIG_OPUS_ENCODER)            += x86/celt_pvq_init.o
 OBJS-$(CONFIG_HEVC_DECODER)            += x86/hevcdsp_init.o x86/h26x/h2656dsp.o
-OBJS-$(CONFIG_JPEG2000_DECODER)        += x86/jpeg2000dsp_init.o
+OBJS-$(CONFIG_JPEG2000_DECODER)        += x86/jpeg2000dsp_init.o \
+                                          x86/jpeg2000dwt_avx2.o
 OBJS-$(CONFIG_LSCR_DECODER)            += x86/pngdsp_init.o
 OBJS-$(CONFIG_MLP_DECODER)             += x86/mlpdsp_init.o
 OBJS-$(CONFIG_MPEG4_DECODER)           += x86/mpeg4videodsp.o x86/xvididct_init.o
