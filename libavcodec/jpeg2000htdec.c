@@ -48,6 +48,7 @@
  */
 
 #include <stdint.h>
+#include <stdalign.h>
 #include "libavutil/attributes.h"
 #include "libavutil/common.h"
 #include "libavutil/avassert.h"
@@ -69,6 +70,9 @@ const static uint8_t mel_e[13] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5 };
 
 static const uint16_t dec_cxt_vlc_table1[1024];
 static const uint16_t dec_cxt_vlc_table0[1024];
+static const uint16_t uvlc_dec_0[256 + 64];
+static const uint16_t uvlc_dec_1[256];
+
 
 typedef struct StateVars {
     int32_t pos;
@@ -79,30 +83,21 @@ typedef struct StateVars {
     uint64_t bit_buf;
 } StateVars;
 
-typedef struct MelDecoderState {
-    uint8_t k;
-    uint8_t run;
-    uint8_t one;
-} MelDecoderState;
+typedef struct Dec_state {
+    uint8_t *buf;
+    uint64_t Creg;
+    int32_t bits;
+    uint32_t unstuff;
+    int32_t length;
+    void (*read)(struct Dec_state *);
+    uint32_t (*fetch)(struct Dec_state *);
+    uint32_t (*advance)(struct Dec_state *, int32_t);
+} Dec_state;
 
-/**
- *  Given a precomputed c, checks whether n % d == 0. c is precomputed from d
- *  using precompute_c().
- */
-av_always_inline
-static uint32_t is_divisible(uint32_t n, uint64_t c)
-{
-    return n * c <= c - 1;
-}
-
-/**
- *  Precompute the number c used by is_divisible().
- */
-av_always_inline
-static uint64_t precompute_c(uint32_t d)
-{
-    return 1 + (0xffffffffffffffffull / d);
-}
+enum Quads {
+    Q0,
+    Q1
+};
 
 static void jpeg2000_init_zero(StateVars *s)
 {
@@ -112,12 +107,6 @@ static void jpeg2000_init_zero(StateVars *s)
     s->bits      = 0;
     s->pos       = 0;
     s->last      = 0;
-}
-
-static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
-{
-    jpeg2000_init_zero(s);
-    s->pos = Pcup;
 }
 
 static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
@@ -130,12 +119,6 @@ static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
     s->bit_buf   = 0;
 }
 
-static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
-{
-    mel_state->k   = 0;
-    mel_state->run = 0;
-    mel_state->one = 0;
-}
 
 /**
  * Refill the buffer backwards in little endian while skipping over stuffing
@@ -200,25 +183,6 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *ar
     return 0;
 }
 
-/**
- * Refill the bit-buffer reading new bits going forward
- * in the stream while skipping over stuffed bits.
- */
-static void jpeg2000_bitbuf_refill_forward(StateVars *buffer, const uint8_t *array,
-                                           uint32_t length)
-{
-    while (buffer->bits_left < 32) {
-        buffer->tmp = 0xFF;
-        buffer->bits = (buffer->last == 0xFF) ? 7 : 8;
-        if (buffer->pos < length) {
-            buffer->tmp = array[buffer->pos];
-            buffer->pos += 1;
-            buffer->last = buffer->tmp;
-        }
-        buffer->bit_buf |= ((uint64_t) buffer->tmp) << buffer->bits_left;
-        buffer->bits_left += buffer->bits;
-    }
-}
 
 /**
  * Drops bits from lower bits in the bit buffer. buf contains the bit buffers.
@@ -250,195 +214,7 @@ static uint64_t jpeg2000_bitbuf_get_bits_lsb(StateVars *bit_stream, uint8_t nbit
     return bits;
 }
 
-/**
- * Get bits from the bit buffer reading them from the least significant bits
- * moving to the most significant bits. In case there are fewer bits, refill from
- * buf moving forward.
- */
 av_always_inline
-static uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(StateVars *bit_stream,
-                                                     uint8_t nbits, const uint8_t *buf,
-                                                     uint32_t length)
-{
-    uint64_t bits;
-    uint64_t mask = (1ull << nbits) - 1;
-
-    if (bit_stream->bits_left <= nbits)
-        jpeg2000_bitbuf_refill_forward(bit_stream, buf, length);
-    bits = bit_stream->bit_buf & mask;
-    jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
-    return bits;
-}
-
-/**
- * Look ahead bit buffer without discarding bits.
- */
-av_always_inline
-static uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
-{
-    uint64_t mask = (1ull << nbits) - 1;
-    return stream->bit_buf & mask;
-}
-
-static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup,
-                              const uint8_t *Dcup)
-{
-    s->bits_left = 0;
-    s->bit_buf   = 0;
-    s->pos       = Lcup - 2 - Pcup;
-    s->last      = Dcup[Lcup - 2];
-    s->tmp       = (s->last) >> 4;
-    s->bits      = ((s->tmp & 7) < 7) ? 4 : 3;
-
-    jpeg2000_bitbuf_refill_backwards(s, Dcup + Pcup);
-    jpeg2000_bitbuf_drop_bits_lsb(s, 4);
-}
-
-/**
- * Decode prefix codes for VLC segment. See Rec. ITU-T T.814, 7.3.5.
- */
-av_always_inline
-static int  jpeg2000_decode_ctx_vlc(const Jpeg2000DecoderContext *s,
-                                    StateVars *vlc_stream, const uint16_t *table,
-                                    const uint8_t *Dcup, uint8_t *sig_pat,
-                                    uint8_t *res_off, uint8_t *emb_pat_k,
-                                    uint8_t *emb_pat_1, uint8_t pos,
-                                    uint32_t Pcup, uint16_t context)
-{
-    uint32_t value;
-    uint8_t len;
-    uint64_t index;
-    uint64_t code_word;
-
-    jpeg2000_bitbuf_refill_backwards(vlc_stream, Dcup + Pcup);
-
-    code_word = vlc_stream->bit_buf & 0x7f;
-    index = code_word + (context << 7);
-
-    av_assert0(index < 1024); // The CxtVLC table has 1024 entries.
-
-    value = table[index];
-
-    len = (value & 0x000F) >> 1;
-
-    res_off[pos] = (uint8_t) (value & 1);
-    sig_pat[pos] = (uint8_t) ((value & 0x00F0) >> 4);
-    emb_pat_k[pos] = (uint8_t) ((value & 0x0F00) >> 8);
-    emb_pat_1[pos] = (uint8_t) ((value & 0xF000) >> 12);
-
-    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, len);
-    return 0;
-}
-
-/**
- * Decode variable length u-vlc prefix. See decodeUPrefix procedure at Rec.
- * ITU-T T.814, 7.3.6.
- */
-av_always_inline
-static uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
-{
-    static const uint8_t return_value[8] = { 5, 1, 2, 1, 3, 1, 2, 1 };
-    static const uint8_t drop_bits[8]    = { 3, 1, 2, 1, 3, 1, 2, 1 };
-
-    uint8_t bits;
-
-    if (vlc_stream->bits_left < 3)
-        jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
-
-    bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 3);
-
-    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, drop_bits[bits]);
-    return return_value[bits];
-}
-
-/**
- * Decode variable length u-vlc suffix. See decodeUSuffix procedure at Rec.
- * ITU-T T.814, 7.3.6.
- */
-av_always_inline
-static uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t suffix,
-                                   const uint8_t *refill_array)
-{
-    static const int mask[]      = { 1, 31 };
-    static const int drop_bits[] = { 1, 5  };
-
-    uint8_t bits;
-    int cond = suffix != 3;
-    if (suffix < 3)
-        return 0;
-
-    if (vlc_stream->bits_left < 5)
-        jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
-
-    bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 5);
-
-    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, drop_bits[cond]);
-    return bits & mask[cond];
-}
-
-/**
- * Decode u-vlc extension values. See decodeUExtension procedure at Rec. ITU-T
- * T.814, 7.3.6.
- */
-av_always_inline
-static uint8_t vlc_decode_u_extension(StateVars *vlc_stream, uint8_t suffix,
-                                      const uint8_t *refill_array)
-{
-    return jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4 * (suffix >= 28), refill_array);
-}
-
-/**
- * Magnitude and Sign decode procedures. See decodeMagSgnValue procedure at Rec.
- * ITU-T T.814, 7.3.8.
- */
-av_always_inline
-static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n,
-                                       int32_t i_n, const uint8_t *buf, uint32_t length)
-{
-    int32_t val = 0;
-    if (m_n > 0) {
-        val = jpeg2000_bitbuf_get_bits_lsb_forward(mag_sgn_stream,m_n,buf,length);
-        val += (i_n << m_n);
-    }
-    return val;
-}
-
-av_always_inline
-static void recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2],
-                            int32_t known_1[2], const uint8_t emb_pat_1[2],
-                            int32_t v[2][4], int32_t m[2][4], uint8_t *E,
-                            uint32_t *mu_n, const uint8_t *Dcup, uint32_t Pcup,
-                            uint32_t pLSB)
-{
-    for (int i = 0; i < 4; i++) {
-        int32_t n = 4 * q + i;
-        m_n[pos] = m[pos][i];
-        known_1[pos] = (emb_pat_1[pos] >> i) & 1;
-        v[pos][i] = jpeg2000_decode_mag_sgn(mag_sgn, m_n[pos], known_1[pos], Dcup, Pcup);
-
-        if (m_n[pos] != 0) {
-            E[n] = 32 - ff_clz(v[pos][i] | 1);
-            mu_n[n] = (v[pos][i] >> 1) + 1;
-            mu_n[n] <<= pLSB;
-            mu_n[n] |= (1 << (pLSB - 1)); // Add 0.5 (reconstruction parameter = 1/2)
-            mu_n[n] |= ((uint32_t) (v[pos][i] & 1)) << 31; // sign bit.
-        }
-    }
-}
-
-static int jpeg2000_import_bit(StateVars *stream, const uint8_t *array, uint32_t length)
-{
-    int cond = stream->pos < length;
-    int pos = FFMIN(stream->pos, length - 1);
-    if (stream->bits == 0) {
-        stream->bits = (stream->tmp == 0xFF) ? 7 : 8;
-        stream->pos += cond;
-        stream->tmp = cond ? array[pos] : 0xFF;
-    }
-    stream->bits -= 1;
-    return (stream->tmp >> stream->bits) & 1;
-}
-
 static int jpeg2000_peek_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
     uint8_t bit;
@@ -459,41 +235,6 @@ static int jpeg2000_peek_bit(StateVars *stream, const uint8_t *array, uint32_t l
     return  bit;
 }
 
-static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
-                                   StateVars *mel_stream,
-                                   const uint8_t *Dcup,
-                                   uint32_t Lcup)
-{
-
-    if (mel_state->run == 0 && mel_state->one == 0) {
-        uint8_t eval;
-        uint8_t bit;
-
-        eval = mel_e[mel_state->k];
-        bit = jpeg2000_import_bit(mel_stream, Dcup, Lcup);
-        if (bit == 1) {
-            mel_state->run = 1 << eval;
-            mel_state->k = FFMIN(12, mel_state->k + 1);
-        } else {
-            mel_state->run = 0;
-            while (eval > 0) {
-                bit = jpeg2000_import_bit(mel_stream, Dcup, Lcup);
-                mel_state->run = (2 * (mel_state->run)) + bit;
-                eval -= 1;
-            }
-            mel_state->k = FFMAX(0, mel_state->k - 1);
-            mel_state->one = 1;
-        }
-    }
-    if (mel_state->run > 0) {
-        mel_state->run -= 1;
-        return 0;
-    } else {
-        mel_state->one = 0;
-        return 1;
-    }
-}
-
 /**
  * Magref decoding procedures.
  */
@@ -504,513 +245,757 @@ static int jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array,
     return jpeg2000_bitbuf_get_bits_lsb(stream, 1, array);
 }
 
-/**
- * Signal EMB decode.
- */
-static int jpeg2000_decode_sig_emb(const Jpeg2000DecoderContext *s, MelDecoderState *mel_state,
-                                   StateVars *mel_stream, StateVars *vlc_stream,
-                                   const uint16_t *vlc_table, const uint8_t *Dcup,
-                                   uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
-                                   uint8_t *emb_pat_1, uint8_t pos, uint16_t context,
-                                   uint32_t Lcup, uint32_t Pcup)
-{
-    if (context == 0) {
-        uint8_t sym;
-        sym = jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup);
-        if (sym == 0) {
-            sig_pat[pos] = 0;
-            res_off[pos] = 0;
-            emb_pat_k[pos] = 0;
-            emb_pat_1[pos] = 0;
-            return 0;
+static void MEL_init(Dec_state *st, int32_t *MEL_k, int32_t *num_runs, uint64_t *runs, const uint8_t *Dcup, int32_t Lcup, int32_t Scup) {
+    st->buf = Dcup + Lcup - Scup;
+    st->Creg = 0;
+    st->bits = 0;
+    st->length = Scup - 1;  // length is the length of MEL+VLC-1
+    st->unstuff = 0;
+    *MEL_k = 0;
+    *num_runs = 0;
+    *runs = 0;
+    int32_t num = 4 - (int32_t)((intptr_t)(st->buf) & 0x3);
+    for (int32_t i = 0; i < num; ++i) {
+        uint64_t d = (st->length > 0) ? *(st->buf) : 0xFF;  // if buffer is exhausted, set data to 0xFF
+        if (st->length == 1) {
+            d |= 0xF;  // if this is MEL+VLC+1, set LSBs to 0xF (see the spec)
+        }
+        st->buf += st->length-- > 0;  // increment if the end is not reached
+        int32_t d_bits = 8 - st->unstuff;
+        st->Creg = (st->Creg << d_bits) | d;
+        st->bits += d_bits;
+        st->unstuff = ((d & 0xFF) == 0xFF);
+    }
+    st->Creg <<= (64 - st->bits);
+}
+
+static void MEL_read(Dec_state *st) {
+    if (st->bits > 32) {  // there are enough bits in tmp, return without any reading
+        return;
+    }
+
+    uint32_t val = 0xFFFFFFFF;  // feed in 0xFF if buffer is exhausted
+    if (st->length > 4) {           // if there is data in the MEL segment
+        val = *(uint32_t *)(st->buf);  // read 32 bits from MEL data
+        st->buf += 4;                                                         // advance pointer
+        st->length -= 4;                                                      // reduce counter
+    } else if (st->length > 0) {
+        // 4 or less
+        int i = 0;
+        while (st->length > 1) {
+            uint32_t v = *st->buf++;                // read one byte at a time
+            uint32_t m = ~(0xFFU << i);         // mask of location
+            val = (val & m) | (v << i);  // put one byte in its correct location
+            --st->length;
+            i += 8;
+        }
+        // length equal to 1
+        uint32_t v = *st->buf++;  // the one before the last is different
+        v |= 0xF;             // MEL and VLC segments may be overlapped
+        uint32_t m = ~(0xFFU << i);
+        val        = (val & m) | (v << i);
+        --st->length;
+    } else {
+        // error
+    }
+
+    // next we unstuff them before adding them to the buffer
+    int32_t bits_local = 32 - st->unstuff;  // number of bits in val, subtract 1 if the previously read byte requires unstuffing
+
+    // data is unstuffed and accumulated in t
+    // bits_local has the number of bits in t
+    uint32_t t = val & 0xFF;
+    int32_t unstuff_flag = ((val & 0xFF) == 0xFF);
+    bits_local -= unstuff_flag;
+    t = t << (8 - unstuff_flag);
+
+    t |= (val >> 8) & 0xFF;
+    unstuff_flag = (((val >> 8) & 0xFF) == 0xFF);
+    bits_local -= unstuff_flag;
+    t = t << (8 - unstuff_flag);
+
+    t |= (val >> 16) & 0xFF;
+    unstuff_flag = (((val >> 16) & 0xFF) == 0xFF);
+    bits_local -= unstuff_flag;
+    t = t << (8 - unstuff_flag);
+
+    t |= (val >> 24) & 0xFF;
+    st->unstuff = (((val >> 24) & 0xFF) == 0xFF);
+
+    // move to tmp, and push the result all the way up, so we read from the MSB
+    st->Creg |= ((uint64_t)(t)) << (64 - bits_local - st->bits);
+    st->bits += bits_local;
+}
+
+static void MEL_decode(Dec_state *st, int32_t *MEL_k, int32_t *num_runs, uint64_t *runs) {
+    if (st->bits < 6) {  // if there are less than 6 bits in tmp then read from the MEL bitstream 6 bits that is
+        // the largest decodable MEL codeword.
+        MEL_read(st);
+    }
+    // repeat so long that there is enough decodable bits in tmp, and the runs store is not full
+    // (num_runs < 8)
+    while (st->bits >= 6 && *num_runs < 8) {
+        int32_t eval = mel_e[*MEL_k];
+        int32_t run  = 0;
+        // The next bit to decode (stored in MSB)
+        if (st->Creg & (1ULL << 63)) {
+            // "1" is found
+            run = 1 << eval;
+            run--;                                        // consecutive runs of 0 events - 1
+            *MEL_k = ((*MEL_k + 1) < 12) ? *MEL_k + 1 : 12;  // increment, max is 12
+            st->Creg <<= 1;                                    // consume one bit from tmp
+            st->bits--;
+            run <<= 1;  // a stretch of zeros not terminating in one
+        } else {
+            // "0" is found
+            run   = (int32_t)(st->Creg >> (63 - eval)) & ((1 << eval) - 1);
+            *MEL_k = ((*MEL_k - 1) > 0) ? *MEL_k - 1 : 0;  // decrement, min is 0
+            st->Creg <<= eval + 1;                           // consume eval + 1 bits (max is 6)
+            st->bits -= eval + 1;
+            run = (run << 1) + 1;  // a stretch of zeros terminating with one
+        }
+        eval = *num_runs * 7;                             // 7 bits per run
+        *runs &= ~((uint64_t)(0x3F) << eval);  // 6 bits are sufficient
+        *runs |= ((uint64_t)(run)) << eval;    // store the value in runs
+        (*num_runs)++;                                      // increment count
+    }
+}
+
+static int32_t MEL_get_run(Dec_state *st, int32_t *MEL_k, int32_t *num_runs, uint64_t *runs) {
+    if (*num_runs == 0) {  // if no runs, decode more bit from MEL segment
+        MEL_decode(st, MEL_k, num_runs, runs);
+    }
+    int32_t t = (int32_t)(*runs & 0x7F);  // retrieve one run
+    *runs >>= 7;                                     // remove the retrieved run
+    (*num_runs)--;
+    return t;  // return run
+}
+
+av_always_inline
+static void VLC_read(Dec_state *st) {
+    // process 4 bytes at a time
+    if (st->bits > 32) {
+        // if there are already more than 32 bits, do nothing to prevent overflow of Creg
+        return;
+    }
+    uint32_t val = 0;
+    if (st->length > 3) {  // Common case; we have at least 4 bytes available
+        val = *(uint32_t *)(st->buf - 3);
+        st->buf -= 4;
+        st->length -= 4;
+    } else if (st->length > 0) {  // we have less than 4 bytes
+        int i = 24;
+        while (st->length > 0) {
+            uint32_t v = *st->buf--;
+            val |= (v << i);
+            --st->length;
+            i -= 8;
+        }
+    } else {
+        // error
+    }
+
+    // accumulate in tmp, number of bits in tmp are stored in bits
+    uint32_t tmp = val >> 24;  // start with the MSB byte
+    int32_t bits_local;
+
+    // test unstuff (previous byte is >0x8F), and this byte is 0x7F
+    bits_local        = 8 - ((st->unstuff && (((val >> 24) & 0x7F) == 0x7F)) ? 1 : 0);
+    int32_t unstuff_flag = (val >> 24) > 0x8F;  // this is for the next byte
+
+    tmp |= ((val >> 16) & 0xFF) << bits_local;  // process the next byte
+    bits_local += 8 - ((unstuff_flag && (((val >> 16) & 0x7F) == 0x7F)) ? 1 : 0);
+    unstuff_flag = ((val >> 16) & 0xFF) > 0x8F;
+
+    tmp |= ((val >> 8) & 0xFF) << bits_local;
+    bits_local += 8 - ((unstuff_flag && (((val >> 8) & 0x7F) == 0x7F)) ? 1 : 0);
+    unstuff_flag = ((val >> 8) & 0xFF) > 0x8F;
+
+    tmp |= (val & 0xFF) << bits_local;
+    bits_local += 8 - ((unstuff_flag && ((val & 0x7F) == 0x7F)) ? 1 : 0);
+    unstuff_flag = (val & 0xFF) > 0x8F;
+
+    // now move the read and unstuffed bits into this->Creg
+    st->Creg |= (uint64_t)(tmp) << st->bits;
+    st->bits += bits_local;
+    st->unstuff = unstuff_flag;  // this for the next read
+}
+
+static uint32_t VLC_fetch(Dec_state *st) {
+    if (st->bits < 32) {
+        st->read(st);
+        if (st->bits < 32) {
+            st->read(st);
         }
     }
-    return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat,
-                                   res_off, emb_pat_k, emb_pat_1, pos, Pcup,
-                                   context);
+    return (uint32_t)st->Creg;
+}
+
+static uint32_t VLC_advance(Dec_state *st, int32_t num_bits) {
+    if (num_bits > st->bits) {
+        printf("ERROR: VLC require %d bits but there are %d bits left\n", num_bits, st->bits);
+    }
+    st->Creg >>= num_bits;
+    st->bits -= num_bits;
+    return (uint32_t)st->Creg;
+}
+
+static void VLC_init(Dec_state *st, uint8_t *Dcup, int32_t Lcup, int32_t Scup) {
+    st->buf = Dcup + Lcup - 2;
+    st->Creg = 0;
+    st->bits = 0;
+    st->length = Scup - 2;
+    st->unstuff = 0;
+    st->read = VLC_read;
+    st->fetch = VLC_fetch;
+    st->advance = VLC_advance;
+
+    uint32_t d = *st->buf--;  // read a byte (only use it's half byte)
+    st->Creg       = d >> 4;
+    st->bits       = 4 - ((st->Creg & 0x07) == 0x07);
+    st->unstuff    = (d | 0x0F) > 0x8f;
+
+    int32_t p = (int32_t)((intptr_t)(st->buf) & 0x03);
+//    p &= 0x03;
+    int32_t num  = 1 + p;
+    int32_t tnum = (num < st->length) ? num : st->length;
+    for (int i = 0; i < tnum; ++i) {
+        uint64_t d64;
+        d64             = *st->buf--;
+        uint32_t d_bits = 8 - ((st->unstuff && ((d64 & 0x7F) == 0x7F)) ? 1 : 0);
+        st->Creg |= d64 << st->bits;
+        st->bits += d_bits;
+        st->unstuff = d64 > 0x8F;
+    }
+    st->length -= tnum;
+    st->read(st);
 }
 
 av_always_inline
-static int jpeg2000_get_state(int x1, int x2, int stride, int shift_by,
-                              const uint8_t *block_states)
-{
-    return (block_states[(x1 + 1) * stride + (x2 + 1)] >> shift_by) & 1;
+static void MagSgn_read(Dec_state *st) {
+    if (st->bits > 32) {
+        printf("ERROR: in MagSgn reading\n");
+    }
+
+    uint32_t val = 0;
+    if (st->length > 3) {
+        val = *(uint32_t *)(st->buf);
+        st->buf += 4;
+        st->length -= 4;
+    } else if (st->length > 0) {
+        int i = 0;
+        val   = 0xFFFFFFFFU; // (X != 0) ? 0xFFFFFFFFU : 0;
+        while (st->length > 0) {
+            uint32_t v =  *(st->buf++);
+            uint32_t m = ~(0xFFU << i);
+            val        = (val & m) | (v << i);  // put one byte in its correct location
+            --st->length;
+            i += 8;
+        }
+    } else {
+        val = 0xFFFFFFFFU; // (X != 0) ? 0xFFFFFFFFU : 0;
+    }
+
+    // we accumulate in t and keep a count of the number of bits_local in bits_local
+    int32_t bits_local   = 8 - st->unstuff;
+    uint32_t t            = val & 0xFF;
+    int32_t unstuff_flag = ((val & 0xFF) == 0xFF);  // Do we need unstuffing next?
+
+    t |= ((val >> 8) & 0xFF) << bits_local;
+    bits_local += 8 - unstuff_flag;
+    unstuff_flag = (((val >> 8) & 0xFF) == 0xFF);
+
+    t |= ((val >> 16) & 0xFF) << bits_local;
+    bits_local += 8 - unstuff_flag;
+    unstuff_flag = (((val >> 16) & 0xFF) == 0xFF);
+
+    t |= ((val >> 24) & 0xFF) << bits_local;
+    bits_local += 8 - unstuff_flag;
+    st->unstuff = (((val >> 24) & 0xFF) == 0xFF);  // for next byte
+
+    st->Creg |= ((uint64_t)t) << st->bits;  // move data to this->tmp
+    st->bits += bits_local;
 }
 
 av_always_inline
-static void jpeg2000_modify_state(int x1, int x2, int stride,
-                                  int value, uint8_t *block_states)
-{
-    block_states[(x1 + 1) * stride + (x2 + 1)] |= value;
+static uint32_t MagSgn_fetch(Dec_state *st) {
+    if (st->bits < 32) {
+        st->read(st);
+        if (st->bits < 32)  // need to test
+            st->read(st);
+    }
+    return (uint32_t)st->Creg;
+}
+av_always_inline
+static uint32_t MagSgn_advance(Dec_state *st, int32_t n) {
+    if (n > st->bits) {
+        printf("ERROR: illegal attempt to advance %d bits but there are %d bits left in MagSgn advance\n", n,
+               st->bits);
+        return -1;
+    }
+    st->Creg >>= n;  // consume n bits
+    st->bits -= n;
+    return 0;
 }
 
-av_always_inline
-static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
-                                              Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1,
-                                              MelDecoderState *mel_state,
-                                              StateVars *mel_stream, StateVars *vlc_stream,
-                                              StateVars *mag_sgn_stream, const uint8_t *Dcup,
+
+static void MagSgn_init(Dec_state *st, uint8_t *Dcup, int32_t Pcup) {
+    st->buf = Dcup;
+    st->Creg = 0;
+    st->bits = 0;
+    st->unstuff = 0;
+    st->length = Pcup;
+
+    st->read = MagSgn_read;
+    st->fetch = MagSgn_fetch;
+    st->advance = MagSgn_advance;
+    // for alignment
+    intptr_t p = (intptr_t)st->buf;
+    p &= 0x03;
+    int32_t num = 4 - p;
+    for (int32_t i = 0; i < num; ++i) {
+        uint64_t d;
+        if (st->length-- > 0) {
+            d = *st->buf++;
+        } else {
+            d = (uint64_t)0xFF; // X (0 or FF)
+        }
+        st->Creg |= (d << st->bits);
+        st->bits += 8 - st->unstuff;
+        st->unstuff = ((d & 0xFF) == 0xFF);  // bit-unstuffing for next byte
+    }
+    st->read(st);
+}
+
+
+
+
+static int jpeg2000_decode_ht_cleanup_segment(Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, const uint8_t *Dcup,
                                               uint32_t Lcup, uint32_t Pcup, uint8_t pLSB,
-                                              int width, int height, const int stride,
-                                              int32_t *sample_buf, uint8_t *block_states)
+                                              const int stride,
+                                              uint8_t *block_states)
 {
-    uint16_t q                      = 0;     // Represents current quad position
-    uint16_t q1, q2;
-    uint16_t context1, context2;
-    uint16_t context                = 0;
+    Dec_state mag_dec, mel_dec, vlc_dec;
+    int32_t MEL_k, num_runs;
+    uint64_t runs;
+    const int32_t width = cblk->coord[0][1] - cblk->coord[0][0];
+    const int32_t height = cblk->coord[1][1] - cblk->coord[1][0];
+    const uint16_t QW = ff_jpeg2000_ceildiv(width, 2);
+    const uint16_t QH = ff_jpeg2000_ceildiv(height, 2);
+    int32_t sstr = (int32_t)(((width + 2) + 7u) & ~7u);  // multiples of 8
+    uint16_t *sp;
+    int32_t qx;
 
-    uint8_t sig_pat[2]              = { 0 }; // significance pattern
-    uint8_t res_off[2]              = { 0 }; // residual offset
-    uint8_t emb_pat_k[2]            = { 0 }; // exponent Max Bound pattern K
-    uint8_t emb_pat_1[2]            = { 0 }; // exponent Max Bound pattern 1
-    uint8_t gamma[2]                = { 0 };
+    MagSgn_init(&mag_dec, Dcup, Pcup);
+    MEL_init(&mel_dec, &MEL_k, &num_runs, &runs, Dcup, Lcup, Lcup - Pcup);
+    VLC_init(&vlc_dec, Dcup, Lcup, Lcup - Pcup);
 
-    uint8_t E_n[2]                  = { 0 };
-    uint8_t E_ne[2]                 = { 0 };
-    uint8_t E_nw[2]                 = { 0 };
-    uint8_t E_nf[2]                 = { 0 };
 
-    uint8_t max_e[2]                = { 0 };
-    uint8_t u_pfx[2]                = { 0 };
-    uint8_t u_sfx[2]                = { 0 };
-    uint8_t u_ext[2]                = { 0 };
+    /*******************************************************************************************************************/
+    // VLC, UVLC and MEL decoding
+    /*******************************************************************************************************************/
 
-    int32_t u[2]                    = { 0 };
-    int32_t U[2]                    = { 0 }; // exponent bound
-    int32_t m_n[2]                  = { 0 };
-    int32_t known_1[2]              = { 0 };
+    uint8_t *sp0 = block_states + 1 + stride;
+    uint8_t *sp1 = block_states + 1 + 2 * stride;
+    uint32_t u_off0, u_off1;
+    uint32_t u0, u1;
+    uint32_t context = 0;
+    uint32_t vlcval;
 
-    int32_t m[2][4]                 = { 0 };
-    int32_t v[2][4]                 = { 0 };
+    const uint16_t *dec_table;
+    // Initial line-pair
+    dec_table       = dec_cxt_vlc_table0;
+    sp              = t1->flags;// scratch;
+    int32_t mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
+    for (qx = QW; qx > 0; qx -= 2, sp += 4) {
+        // Decoding of significance and EMB patterns and unsigned residual offsets
+        vlcval       = vlc_dec.fetch(&vlc_dec);
+        uint16_t tv0 = dec_table[(vlcval & 0x7F) + context];
+        if (context == 0) {
+            mel_run -= 2;
+            tv0 = (mel_run == -1) ? tv0 : 0;
+            if (mel_run < 0) {
+                mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
+            }
+        }
+        sp[0] = tv0;
 
-    uint8_t kappa[2]                = { 1, 1 };
+        // calculate context for the next quad, Eq. (1) in the spec
+        context = ((tv0 & 0xE0U) << 2) | ((tv0 & 0x10U) << 3);  // = context << 7
 
-    int ret                         = 0;
+        // Decoding of significance and EMB patterns and unsigned residual offsets
+        vlcval       = vlc_dec.advance(&vlc_dec,(tv0 & 0x000F) >> 1);
+        uint16_t tv1 = dec_table[(vlcval & 0x7F) + context];
+        if (context == 0 && qx > 1) {
+            mel_run -= 2;
+            tv1 = (mel_run == -1) ? tv1 : 0;
+            if (mel_run < 0) {
+                mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
+            }
+        }
+        tv1   = (qx > 1) ? tv1 : 0;
+        sp[2] = tv1;
 
-    int sp;
+        // store sigma
+        *sp0++ = ((tv0 >> 4) >> 0) & 1;
+        *sp0++ = ((tv0 >> 4) >> 2) & 1;
+        *sp0++ = ((tv1 >> 4) >> 0) & 1;
+        *sp0++ = ((tv1 >> 4) >> 2) & 1;
+        *sp1++ = ((tv0 >> 4) >> 1) & 1;
+        *sp1++ = ((tv0 >> 4) >> 3) & 1;
+        *sp1++ = ((tv1 >> 4) >> 1) & 1;
+        *sp1++ = ((tv1 >> 4) >> 3) & 1;
 
-    uint64_t c;
+        // calculate context for the next quad, Eq. (1) in the spec
+        context = ((tv1 & 0xE0U) << 2) | ((tv1 & 0x10U) << 3);  // = context << 7
 
-    uint8_t *sigma, *sigma_n, *E;
-    uint32_t *mu, *mu_n;
+        vlcval = vlc_dec.advance(&vlc_dec,(tv1 & 0x000F) >> 1);
+        u_off0 = tv0 & 1;
+        u_off1 = tv1 & 1;
 
-    const uint8_t *vlc_buf = Dcup + Pcup;
+        uint32_t mel_offset = 0;
+        if (u_off0 == 1 && u_off1 == 1) {
+            mel_run -= 2;
+            mel_offset = (mel_run == -1) ? 0x40 : 0;
+            if (mel_run < 0) {
+                mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
+            }
+        }
 
-    /*
-     * Bound on the precision needed to process the codeblock. The number of
-     * decoded bit planes is equal to at most cblk->zbp + 2 since S_blk = P if
-     * there are no placeholder passes or HT Sets and P = cblk->zbp. See Rec.
-     * ITU-T T.814, 7.6.
-     */
-    int maxbp = cblk->zbp + 2;
+        // UVLC decoding
+        uint32_t idx         = (vlcval & 0x3F) + (u_off0 << 6U) + (u_off1 << 7U) + mel_offset;
+        uint32_t uvlc_result = uvlc_dec_0[idx];
+        // remove total prefix length
+        vlcval = vlc_dec.advance(&vlc_dec,uvlc_result & 0x7);
+        uvlc_result >>= 3;
+        // extract suffixes for quad 0 and 1
+        uint32_t len = uvlc_result & 0xF;  // suffix length for 2 quads (up to 10 = 5 + 5)
+        //  ((1U << len) - 1U) can be replaced with _bzhi_u32(UINT32_MAX, len); not fast
+        uint32_t tmp = vlcval & ((1U << len) - 1U);  // suffix value for 2 quads
+        vlcval       = vlc_dec.advance(&vlc_dec,len);
+        uvlc_result >>= 4;
+        // quad 0 length
+        len = uvlc_result & 0x7;  // quad 0 suffix length
+        uvlc_result >>= 3;
+        // U = 1+ u
+        u0 = 1 + (uvlc_result & 7) + (tmp & ~(0xFFU << len));  // always kappa = 1 in initial line pair
+        u1 = 1 + (uvlc_result >> 3) + (tmp >> len);            // always kappa = 1 in initial line pair
 
-    /* convert to raster-scan */
-    const uint16_t is_border_x = width % 2;
-    const uint16_t is_border_y = height % 2;
-
-    const uint16_t quad_width  = ff_jpeg2000_ceildivpow2(width, 1);
-    const uint16_t quad_height = ff_jpeg2000_ceildivpow2(height, 1);
-
-    size_t buf_size = 4 * quad_width * quad_height;
-
-    /* do we have enough precision, assuming a 32-bit decoding path */
-    if (maxbp >= 32)
-        return AVERROR_INVALIDDATA;
-
-    sigma_n = av_calloc(buf_size, sizeof(uint8_t));
-    E       = av_calloc(buf_size, sizeof(uint8_t));
-    mu_n    = av_calloc(buf_size, sizeof(uint32_t));
-
-    if (!sigma_n || !E || !mu_n) {
-        ret = AVERROR(ENOMEM);
-        goto free;
+        sp[1] = (uint16_t)u0;
+        sp[3] = (uint16_t)u1;
     }
+    // sp[0] = sp[1] = 0;
 
-    sigma = sigma_n;
-    mu = mu_n;
+    // Non-initial line-pair
+    dec_table = dec_cxt_vlc_table1;
+    for (uint16_t row = 1; row < QH; row++) {
+        sp0 = block_states + (row * 2U + 1U) * stride + 1U;
+        sp1 = sp0 + stride;
 
-    while (q < quad_width - 1) {
-        q1 = q;
-        q2 = q1 + 1;
-
-        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                           dec_cxt_vlc_table0, Dcup, sig_pat, res_off,
-                                           emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
-                                           Pcup)) < 0)
-            goto free;
-
-        for (int i = 0; i < 4; i++)
-            sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
-
-        /* calculate context */
-        context  = sigma_n[4 * q1];           // f
-        context |= sigma_n[4 * q1 + 1];       // sf
-        context += sigma_n[4 * q1 + 2] << 1;  // w << 1
-        context += sigma_n[4 * q1 + 3] << 2;
-
-        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                           dec_cxt_vlc_table0, Dcup, sig_pat, res_off,
-                                           emb_pat_k, emb_pat_1, J2K_Q2, context, Lcup,
-                                           Pcup)) < 0)
-            goto free;
-
-        for (int i = 0; i < 4; i++)
-            sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
-
-        /* calculate context for the next quad */
-        context  = sigma_n[4 * q2];           // f
-        context |= sigma_n[4 * q2 + 1];       // sf
-        context += sigma_n[4 * q2 + 2] << 1;  // w << 1
-        context += sigma_n[4 * q2 + 3] << 2;  // sw << 2
-
-        u[0] = 0;
-        u[1] = 0;
-
-        jpeg2000_bitbuf_refill_backwards(vlc_stream, vlc_buf);
-
-        if (res_off[J2K_Q1] == 1 && res_off[J2K_Q2] == 1) {
-
-            if (jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup) == 1) {
-
-                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-                u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-
-                u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-                u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
-
-                u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-                u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
-
-                u[J2K_Q1] = 2 + u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
-                u[J2K_Q2] = 2 + u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] * 4);
-
-            } else {
-                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-
-                if (u_pfx[J2K_Q1] > 2) {
-                    u[J2K_Q2] = jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 1, vlc_buf) + 1;
-                    u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-                    u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-                } else {
-                    u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-                    u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-                    u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
-                    u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-                    u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
-                    u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] * 4);
+        sp = t1->flags + row * sstr;// scratch + row * sstr;
+        // calculate context for the next quad: w, sw, nw are always 0 at the head of a row
+        context = ((sp[0 - sstr] & 0xA0U) << 2) | ((sp[2 - sstr] & 0x20U) << 4);
+        for (qx = QW; qx > 0; qx -= 2, sp += 4) {
+            // Decoding of significance and EMB patterns and unsigned residual offsets
+            vlcval       = vlc_dec.fetch(&vlc_dec);
+            uint16_t tv0 = dec_table[(vlcval & 0x7F) + context];
+            if (context == 0) {
+                mel_run -= 2;
+                tv0 = (mel_run == -1) ? tv0 : 0;
+                if (mel_run < 0) {
+                    mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
                 }
-                /* See Rec. ITU-T T.814, 7.3.6(3) */
-                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
             }
+            // calculate context for the next quad, Eq. (2) in the spec
+            context = ((tv0 & 0x40U) << 2) | ((tv0 & 0x80U) << 1);              // (w | sw) << 8
+            context |= (sp[0 - sstr] & 0x80U) | ((sp[2 - sstr] & 0xA0U) << 2);  // ((nw | n) << 7) | (ne << 9)
+            context |= (sp[4 - sstr] & 0x20U) << 4;                             // ( nf) << 9
 
-        } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
-            uint8_t pos = res_off[J2K_Q1] == 1 ? 0 : 1;
-            u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-            u_sfx[pos] = vlc_decode_u_suffix(vlc_stream, u_pfx[pos], vlc_buf);
-            u_ext[pos] = vlc_decode_u_extension(vlc_stream, u_sfx[pos], vlc_buf);
-            u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] * 4);
+            sp[0] = tv0;
+
+            vlcval = vlc_dec.advance(&vlc_dec,(tv0 & 0x000F) >> 1);
+
+            // Decoding of significance and EMB patterns and unsigned residual offsets
+            uint16_t tv1 = dec_table[(vlcval & 0x7F) + context];
+            if (context == 0 && qx > 1) {
+                mel_run -= 2;
+                tv1 = (mel_run == -1) ? tv1 : 0;
+                if (mel_run < 0) {
+                    mel_run = MEL_get_run(&mel_dec, &MEL_k, &num_runs, &runs);
+                }
+            }
+            tv1 = (qx > 1) ? tv1 : 0;
+            // calculate context for the next quad, Eq. (2) in the spec
+            context = ((tv1 & 0x40U) << 2) | ((tv1 & 0x80U) << 1);              // (w | sw) << 8
+            context |= (sp[2 - sstr] & 0x80U) | ((sp[4 - sstr] & 0xA0U) << 2);  // ((nw | n) << 7) | (ne << 9)
+            context |= (sp[6 - sstr] & 0x20U) << 4;                             // ( nf) << 9
+
+            sp[2] = tv1;
+
+            // store sigma
+            *sp0++ = ((tv0 >> 4) >> 0) & 1;
+            *sp0++ = ((tv0 >> 4) >> 2) & 1;
+            *sp0++ = ((tv1 >> 4) >> 0) & 1;
+            *sp0++ = ((tv1 >> 4) >> 2) & 1;
+            *sp1++ = ((tv0 >> 4) >> 1) & 1;
+            *sp1++ = ((tv0 >> 4) >> 3) & 1;
+            *sp1++ = ((tv1 >> 4) >> 1) & 1;
+            *sp1++ = ((tv1 >> 4) >> 3) & 1;
+
+            vlcval = vlc_dec.advance(&vlc_dec,(tv1 & 0x000F) >> 1);
+
+            // UVLC decoding
+            u_off0       = tv0 & 1;
+            u_off1       = tv1 & 1;
+            uint32_t idx = (vlcval & 0x3F) + (u_off0 << 6U) + (u_off1 << 7U);
+
+            uint32_t uvlc_result = uvlc_dec_1[idx];
+            // remove total prefix length
+            vlcval = vlc_dec.advance(&vlc_dec,uvlc_result & 0x7);
+            uvlc_result >>= 3;
+            // extract suffixes for quad 0 and 1
+            uint32_t len = uvlc_result & 0xF;  // suffix length for 2 quads (up to 10 = 5 + 5)
+            //  ((1U << len) - 1U) can be replaced with _bzhi_u32(UINT32_MAX, len); not fast
+            uint32_t tmp = vlcval & ((1U << len) - 1U);  // suffix value for 2 quads
+            vlcval       = vlc_dec.advance(&vlc_dec,len);
+            uvlc_result >>= 4;
+            // quad 0 length
+            len = uvlc_result & 0x7;  // quad 0 suffix length
+            uvlc_result >>= 3;
+            u0 = (uvlc_result & 7) + (tmp & ~(0xFFU << len));
+            u1 = (uvlc_result >> 3) + (tmp >> len);
+
+            sp[1] = (uint16_t)u0;
+            sp[3] = (uint16_t)u1;
         }
-        U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
-        U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
-        if (U[J2K_Q1] > maxbp || U[J2K_Q2] > maxbp) {
-            ret = AVERROR_INVALIDDATA;
-            goto free;
-        }
-
-        for (int i = 0; i < 4; i++) {
-            m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
-            m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
-        }
-
-        recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
-                        E, mu_n, Dcup, Pcup, pLSB);
-
-        recover_mag_sgn(mag_sgn_stream, J2K_Q2, q2, m_n, known_1, emb_pat_1, v, m,
-                        E, mu_n, Dcup, Pcup, pLSB);
-
-        q += 2; // Move to the next quad pair
+        // sp[0] = sp[1] = 0;
     }
 
-    if (quad_width % 2 == 1) {
-        q1 = q;
+    /*******************************************************************************************************************/
+    // MagSgn decoding
+    /*******************************************************************************************************************/
+    {
+        // We allocate a scratch row for storing v_n values.
+        // We have 512 quads horizontally.
+        // We need an extra entry to handle the case of vp[1]
+        // when vp is at the last column.
+        // Here, we allocate 4 instead of 1 to make the buffer size
+        // a multipled of 16 bytes.
+        const int v_n_size             = 512 + 4;
+        uint32_t v_n_scratch[512 + 4] = { 0 };  // 2+ kB
 
-        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                           dec_cxt_vlc_table0, Dcup, sig_pat, res_off,
-                                           emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
-                                           Pcup)) < 0)
-            goto free;
+        uint32_t prev_v_n = 0;
+        uint32_t *vp = v_n_scratch;
+        int32_t *dp  = t1->data;
+        sp = t1->flags; // scratch;
 
-        for (int i = 0; i < 4; i++)
-            sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
+        for (uint32_t x = 0; x < width; sp += 2, ++vp) {
+            uint32_t v_n;
+            uint32_t val = 0;
+            uint32_t bit = 0;
+            uint32_t inf = sp[0];
+            uint32_t U_q = sp[1];
+            if (U_q > ((30 - pLSB) + 2)) {
+                av_log(NULL, AV_LOG_ERROR, "U_q is too large.\n");
+                return -1;
+            }
 
-        u[J2K_Q1] = 0;
+            if (inf & (1 << (4 + bit))) {
+                // get 32 bits of magsgn data
+                uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                mag_dec.advance(&mag_dec, m_n);                                // consume m_n
 
-        if (res_off[J2K_Q1] == 1) {
-            u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-            u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-            u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-            u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
+                val = ms_val << 31;                      // get sign bit
+                v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                v_n |= 1;                                // add center of bin
+                // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                val |= (v_n + 2) << (pLSB - 1);
+            }
+            dp[0] = val;
+
+            v_n = 0;
+            val = 0;
+            bit = 1;
+            if (inf & (1 << (4 + bit))) {
+                // get 32 bits of magsgn data
+                uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                val = ms_val << 31;                      // get sign bit
+                v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                v_n |= 1;                                // add center of bin
+                // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                val |= (v_n + 2) << (pLSB - 1);
+            }
+            dp[t1->stride] = val;
+            vp[0]                      = prev_v_n | v_n;
+            prev_v_n                   = 0;
+            ++dp;
+            if (++x >= width) {
+                ++vp;
+                break;
+            }
+
+            val = 0;
+            bit = 2;
+            if (inf & (1 << (4 + bit))) {
+                // get 32 bits of magsgn data
+                uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                val = ms_val << 31;                      // get sign bit
+                v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                v_n |= 1;                                // add center of bin
+                // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                val |= (v_n + 2) << (pLSB - 1);
+            }
+            dp[0] = val;
+
+            v_n = 0;
+            val = 0;
+            bit = 3;
+            if (inf & (1 << (4 + bit))) {
+                // get 32 bits of magsgn data
+                uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                val = ms_val << 31;                      // get sign bit
+                v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                v_n |= 1;                                // add center of bin
+                // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                val |= (v_n + 2) << (pLSB - 1);
+            }
+            dp[t1->stride] = val;
+            prev_v_n                   = v_n;
+            ++dp;
+            ++x;
         }
+        vp[0] = prev_v_n;
 
-        U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
-        if (U[J2K_Q1] > maxbp) {
-            ret = AVERROR_INVALIDDATA;
-            goto free;
-        }
+        for (uint32_t y = 2; y < height; y += 2) {
+            sp = t1->flags + (y >> 1) * sstr; //scratch + (y >> 1) * sstr;
+            vp = v_n_scratch;
+            dp  = t1->data + y * t1->stride;
 
-        for (int i = 0; i < 4; i++)
-            m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
+            prev_v_n = 0;
+            for (uint32_t x = 0; x < width; sp += 2, ++vp) {
+                uint32_t inf = sp[0];
+                uint32_t u_q = sp[1];
+                uint32_t emax, kappa, U_q;
+                uint32_t gamma = inf & 0xF0;
+                uint32_t v_n;
+                uint32_t val = 0;
+                uint32_t bit = 0;
 
-        recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
-                        E, mu_n, Dcup, Pcup, pLSB);
+                gamma &= gamma - 0x10;  // is gamma_q 1?
+                emax  = vp[0] | vp[1];
+                emax = 31 - ff_clz(emax | 2);  // emax - 1
+                kappa = gamma ? emax : 1;
 
-        q++; // move to next quad pair
-    }
+                U_q = u_q + kappa;
+                if (U_q > ((30 - pLSB) + 2)) {
+                    av_log(NULL, AV_LOG_ERROR, "U_q is too large.\n");
+                    return -1;
+                }
 
-    /**
-     * Initial line pair end. As an optimization, we can replace modulo
-     * operations with checking if a number is divisible , since that's the only
-     * thing we need. This is paired with is_divisible. Credits to Daniel Lemire
-     * blog post [1].
-     *
-     * [1]
-     * https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
-     *
-     * It's UB on zero, but the spec doesn't allow a quad being zero, so we
-     * error out early in case that's the case.
-     */
-    c = precompute_c(quad_width);
+                if (inf & (1 << (4 + bit))) {
+                    // get 32 bits of magsgn data
+                    uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                    uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                    mag_dec.advance(&mag_dec, m_n);                                // consume m_n
 
-    for (int row = 1; row < quad_height; row++) {
-        while ((q - (row * quad_width)) < quad_width - 1 && q < (quad_height * quad_width)) {
-            q1 = q;
-            q2 = q + 1;
-            context1  = sigma_n[4 * (q1 - quad_width) + 1];
-            context1 += sigma_n[4 * (q1 - quad_width) + 3] << 2;              // ne
+                    val = ms_val << 31;                      // get sign bit
+                    v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                    v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                    v_n |= 1;                                // add center of bin
+                    // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                    // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                    val |= (v_n + 2) << (pLSB - 1);
+                }
+                dp[0] = val;
 
-            if (!is_divisible(q1, c)) {
-                context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
-                context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1; // sw | q
+                v_n = 0;
+                val = 0;
+                bit = 1;
+                if (inf & (1 << (4 + bit))) {
+                    // get 32 bits of magsgn data
+                    uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                    uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                    mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                    val = ms_val << 31;                      // get sign bit
+                    v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                    v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                    v_n |= 1;                                // add center of bin
+                    // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                    // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                    val |= (v_n + 2) << (pLSB - 1);
+                }
+                dp[t1->stride] = val;
+                vp[0]                      = prev_v_n | v_n;
+                prev_v_n                   = 0;
+                ++dp;
+                if (++x >= width) {
+                    ++vp;
+                    break;
+                }
+
+                val = 0;
+                bit = 2;
+                if (inf & (1 << (4 + bit))) {
+                    // get 32 bits of magsgn data
+                    uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                    uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                    mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                    val = ms_val << 31;                      // get sign bit
+                    v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                    v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                    v_n |= 1;                                // add center of bin
+                    // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                    // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                    val |= (v_n + 2) << (pLSB - 1);
+                }
+                dp[0] = val;
+
+                v_n = 0;
+                val = 0;
+                bit = 3;
+                if (inf & (1 << (4 + bit))) {
+                    // get 32 bits of magsgn data
+                    uint32_t ms_val = mag_dec.fetch(&mag_dec);
+                    uint32_t m_n    = U_q - ((inf >> (12 + bit)) & 1);  // remove e_k
+                    mag_dec.advance(&mag_dec, m_n);                                // consume m_n
+
+                    val = ms_val << 31;                      // get sign bit
+                    v_n = ms_val & ((1 << m_n) - 1);         // keep only m_n bits
+                    v_n |= ((inf >> (8 + bit)) & 1) << m_n;  // add EMB e_1 as MSB
+                    v_n |= 1;                                // add center of bin
+                    // v_n now has 2 * (\mu - 1) + 0.5 with correct sign bit
+                    // add 2 to make it 2*\mu+0.5, shift it up to missing MSBs
+                    val |= (v_n + 2) << (pLSB - 1);
+                }
+                dp[t1->stride] = val;
+                prev_v_n                   = v_n;
+                ++dp;
+                ++x;
             }
-            if (!is_divisible(q1 + 1, c))
-                context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
-
-            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                               dec_cxt_vlc_table1, Dcup, sig_pat, res_off,
-                                               emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
-                                               Pcup))
-                < 0)
-                goto free;
-
-            for (int i = 0; i < 4; i++)
-                sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
-
-            context2  = sigma_n[4 * (q2 - quad_width) + 1];
-            context2 += sigma_n[4 * (q2 - quad_width) + 3] << 2;
-
-            if (!is_divisible(q2, c)) {
-                context2 |= sigma_n[4 * (q2 - quad_width) - 1];
-                context2 += (sigma_n[4 * q2 - 1] | sigma_n[4 * q2 - 2]) << 1;
-            }
-            if (!is_divisible(q2 + 1, c))
-                context2 |= sigma_n[4 * (q2 - quad_width) + 5] << 2;
-
-            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                               dec_cxt_vlc_table1, Dcup, sig_pat, res_off,
-                                               emb_pat_k, emb_pat_1, J2K_Q2, context2, Lcup,
-                                               Pcup))
-                < 0)
-                goto free;
-
-            for (int i = 0; i < 4; i++)
-                sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
-
-            u[J2K_Q1] = 0;
-            u[J2K_Q2] = 0;
-
-            jpeg2000_bitbuf_refill_backwards(vlc_stream, vlc_buf);
-
-            if (res_off[J2K_Q1] == 1 && res_off[J2K_Q2] == 1) {
-                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-                u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-
-                u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-                u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
-
-                u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-                u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
-
-                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
-                u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
-
-            } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
-                uint8_t pos = res_off[J2K_Q1] == 1 ? 0 : 1;
-
-                u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-                u_sfx[pos] = vlc_decode_u_suffix(vlc_stream, u_pfx[pos], vlc_buf);
-                u_ext[pos] = vlc_decode_u_extension(vlc_stream, u_sfx[pos], vlc_buf);
-
-                u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
-            }
-            sp = sig_pat[J2K_Q1];
-
-            gamma[J2K_Q1] = 1;
-
-            if (sp == 0 || sp == 1 || sp == 2 || sp == 4 || sp == 8)
-                gamma[J2K_Q1] = 0;
-
-            sp = sig_pat[J2K_Q2];
-
-            gamma[J2K_Q2] = 1;
-
-            if (sp == 0 || sp == 1 || sp == 2 || sp == 4 || sp == 8)
-                gamma[J2K_Q2] = 0;
-
-            E_n[J2K_Q1] = E[4 * (q1 - quad_width) + 1];
-            E_n[J2K_Q2] = E[4 * (q2 - quad_width) + 1];
-
-            E_ne[J2K_Q1] = E[4 * (q1 - quad_width) + 3];
-            E_ne[J2K_Q2] = E[4 * (q2 - quad_width) + 3];
-
-            E_nw[J2K_Q1] = (!is_divisible(q1, c)) * E[FFMAX((4 * (q1 - quad_width) - 1), 0)];
-            E_nw[J2K_Q2] = (!is_divisible(q2, c)) * E[FFMAX((4 * (q2 - quad_width) - 1), 0)];
-
-            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) * E[4 * (q1 - quad_width) + 5];
-            E_nf[J2K_Q2] = (!is_divisible(q2 + 1, c)) * E[4 * (q2 - quad_width) + 5];
-
-            max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
-            max_e[J2K_Q2] = FFMAX(E_nw[J2K_Q2], FFMAX3(E_n[J2K_Q2], E_ne[J2K_Q2], E_nf[J2K_Q2]));
-
-            kappa[J2K_Q1] = FFMAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
-            kappa[J2K_Q2] = FFMAX(1, gamma[J2K_Q2] * (max_e[J2K_Q2] - 1));
-
-            U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
-            U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
-            if (U[J2K_Q1] > maxbp || U[J2K_Q2] > maxbp) {
-                ret = AVERROR_INVALIDDATA;
-                goto free;
-            }
-
-            for (int i = 0; i < 4; i++) {
-                m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
-                m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
-            }
-            recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
-                            E, mu_n, Dcup, Pcup, pLSB);
-
-            recover_mag_sgn(mag_sgn_stream, J2K_Q2, q2, m_n, known_1, emb_pat_1, v, m,
-                            E, mu_n, Dcup, Pcup, pLSB);
-
-            q += 2; // Move to the next quad pair
-        }
-
-        if (quad_width % 2 == 1) {
-            q1 = q;
-
-            /* calculate context for current quad */
-            context1  = sigma_n[4 * (q1 - quad_width) + 1];
-            context1 += (sigma_n[4 * (q1 - quad_width) + 3] << 2);
-
-            if (!is_divisible(q1, c)) {
-                context1 |= sigma_n[4 * (q1 - quad_width) - 1];
-                context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1;
-            }
-            if (!is_divisible(q1 + 1, c))
-                context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
-
-            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                               dec_cxt_vlc_table1, Dcup, sig_pat, res_off,
-                                               emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
-                                               Pcup)) < 0)
-                goto free;
-
-            for (int i = 0; i < 4; i++)
-                sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
-
-            u[J2K_Q1] = 0;
-
-            /* Recover mag_sgn value */
-            if (res_off[J2K_Q1] == 1) {
-                u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
-                u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
-                u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-
-                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
-            }
-
-            sp = sig_pat[J2K_Q1];
-
-            gamma[J2K_Q1] = 1;
-
-            if (sp == 0 || sp == 1 || sp == 2 || sp == 4 || sp == 8)
-                gamma[J2K_Q1] = 0;
-
-            E_n[J2K_Q1] = E[4 * (q1 - quad_width) + 1];
-
-            E_ne[J2K_Q1] = E[4 * (q1 - quad_width) + 3];
-
-            E_nw[J2K_Q1] = (!is_divisible(q1, c)) * E[FFMAX((4 * (q1 - quad_width) - 1), 0)];
-
-            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) * E[4 * (q1 - quad_width) + 5];
-
-            max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
-
-            kappa[J2K_Q1] = FFMAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
-
-            U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
-            if (U[J2K_Q1] > maxbp) {
-                ret = AVERROR_INVALIDDATA;
-                goto free;
-            }
-
-            for (int i = 0; i < 4; i++)
-                m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
-
-            recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
-                            E, mu_n, Dcup, Pcup, pLSB);
-            q += 1;
+            vp[0] = prev_v_n;
         }
     }
-
-    // convert to raster-scan
-    for (int y = 0; y < quad_height; y++) {
-        for (int x = 0; x < quad_width; x++) {
-            int j1, j2;
-            int x1, x2 , x3;
-
-            j1 = 2 * y;
-            j2 = 2 * x;
-
-            sample_buf[j2 + (j1 * stride)] = (int32_t)*mu;
-            jpeg2000_modify_state(j1, j2, stride, *sigma, block_states);
-            sigma += 1;
-            mu += 1;
-
-            x1 = y != quad_height - 1 || is_border_y == 0;
-            sample_buf[j2 + ((j1 + 1) * stride)] = ((int32_t)*mu) * x1;
-            jpeg2000_modify_state(j1 + 1, j2, stride, (*sigma) * x1, block_states);
-            sigma += 1;
-            mu += 1;
-
-            x2 = x != quad_width - 1 || is_border_x == 0;
-            sample_buf[(j2 + 1) + (j1 * stride)] = ((int32_t)*mu) * x2;
-            jpeg2000_modify_state(j1, j2 + 1, stride, (*sigma) * x2, block_states);
-            sigma += 1;
-            mu += 1;
-
-            x3 = x1 | x2;
-            sample_buf[(j2 + 1) + (j1 + 1) * stride] = ((int32_t)*mu) * x3;
-            jpeg2000_modify_state(j1 + 1, j2 + 1, stride, (*sigma) * x3, block_states);
-            sigma += 1;
-            mu += 1;
-        }
-    }
-    ret = 1;
-free:
-    av_freep(&sigma_n);
-    av_freep(&E);
-    av_freep(&mu_n);
-    return ret;
+    return 1;
 }
 
 static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j,
@@ -1031,42 +1016,40 @@ static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j,
     *mbr &= 1;
 }
 
-static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s,
+static void jpeg2000_process_stripes_block(Jpeg2000T1Context *t1, StateVars *sig_prop, int i_s, int j_s,
                                            int width, int height, int stride, int pLSB,
-                                           int32_t *sample_buf, uint8_t *block_states,
+                                           uint8_t *block_states,
                                            uint8_t *magref_segment, uint32_t magref_length,
                                            uint8_t is_causal)
 {
     for (int j = j_s; j < j_s + width; j++) {
         uint32_t  mbr_info = 0;
         for (int i = i_s; i < i_s + height; i++) {
-            int modify_state;
             uint8_t bit;
             uint8_t causal_cond = (is_causal == 0) || (i != (i_s + height - 1));
-            int32_t *sp = &sample_buf[j + (i * (stride))];
+            int32_t *sp = t1->data + j + i * t1->stride;
             uint8_t mbr = 0;
+            uint8_t *state_p = block_states + (i + 1) * stride + (j + 1);
 
-            if (jpeg2000_get_state(i, j, stride, HT_SHIFT_SIGMA, block_states) == 0)
+            if ((state_p[0] >> HT_SHIFT_SIGMA & 1) == 0)
                 jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride);
             mbr_info >>= 3;
 
-            modify_state = block_states[(i + 1) * stride + (j + 1)];
-            modify_state |= 1 << HT_SHIFT_SCAN;
+            state_p[0] |= 1 << HT_SHIFT_SCAN;
             if (mbr != 0) {
-                modify_state |= 1 << HT_SHIFT_REF_IND;
+                state_p[0] |= 1 << HT_SHIFT_REF_IND;
                 bit = jpeg2000_peek_bit(sig_prop, magref_segment, magref_length);
-                modify_state |= bit << HT_SHIFT_REF;
+                state_p[0] |= bit << HT_SHIFT_REF;
                 *sp |= bit << pLSB;
                 *sp |= bit << (pLSB - 1); // Add 0.5 (reconstruction parameter = 1/2)
             }
-            jpeg2000_modify_state(i, j, stride, modify_state, block_states);
         }
     }
     // decode sign
     for (int j = j_s; j < j_s + width; j++) {
         for (int i = i_s; i < i_s + height; i++) {
             uint8_t bit;
-            int32_t *sp = &sample_buf[j + (i * (stride))];
+            int32_t *sp = t1->data + j + i * t1->stride;
             uint8_t *state_p = block_states + (i + 1) * stride + (j + 1);
             if ((state_p[0] >> HT_SHIFT_REF) & 1) {
                 bit = jpeg2000_peek_bit(sig_prop, magref_segment, magref_length);
@@ -1080,12 +1063,14 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
  * See procedure decodeSigPropMag at Rec. ITU-T T.814, 7.4.
 */
 av_noinline
-static void jpeg2000_decode_sigprop_segment(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height,
+static void jpeg2000_decode_sigprop_segment(Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk,
                                             const int stride, uint8_t *magref_segment,
                                             uint32_t magref_length, uint8_t pLSB,
-                                            int32_t *sample_buf, uint8_t *block_states)
+                                            uint8_t *block_states)
 {
     StateVars sp_dec;
+    const uint16_t width = cblk->coord[0][1] - cblk->coord[0][0];
+    const uint16_t height = cblk->coord[1][1] - cblk->coord[1][0];
 
     const uint16_t num_v_stripe = height / 4;
     const uint16_t num_h_stripe = width / 4;
@@ -1101,15 +1086,15 @@ static void jpeg2000_decode_sigprop_segment(Jpeg2000Cblk *cblk, uint16_t width, 
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride,
-                                           pLSB, sample_buf, block_states, magref_segment,
+            jpeg2000_process_stripes_block(t1, &sp_dec, i, j, b_width, b_height, stride,
+                                           pLSB, block_states, magref_segment,
                                            magref_length, is_causal);
             j += 4;
         }
         last_width = width % 4;
         if (last_width)
-            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride,
-                                           pLSB, sample_buf, block_states, magref_segment,
+            jpeg2000_process_stripes_block(t1, &sp_dec, i, j, last_width, b_height, stride,
+                                           pLSB, block_states, magref_segment,
                                            magref_length, is_causal);
         i += 4;
     }
@@ -1118,15 +1103,15 @@ static void jpeg2000_decode_sigprop_segment(Jpeg2000Cblk *cblk, uint16_t width, 
     b_height = height % 4;
     j = 0;
     for (int n2 = 0; n2 < num_h_stripe; n2++) {
-        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride,
-                                       pLSB, sample_buf, block_states, magref_segment,
+        jpeg2000_process_stripes_block(t1, &sp_dec, i, j, b_width, b_height, stride,
+                                       pLSB, block_states, magref_segment,
                                        magref_length, is_causal);
         j += 4;
     }
     last_width = width % 4;
     if (last_width)
-        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride,
-                                       pLSB, sample_buf, block_states, magref_segment,
+        jpeg2000_process_stripes_block(t1, &sp_dec, i, j, last_width, b_height, stride,
+                                       pLSB, block_states, magref_segment,
                                        magref_length, is_causal);
 }
 
@@ -1134,12 +1119,14 @@ static void jpeg2000_decode_sigprop_segment(Jpeg2000Cblk *cblk, uint16_t width, 
  * See procedure decodeSigPropMag at Rec. ITU-T T.814, 7.5.
 */
 static void
-jpeg2000_decode_magref_segment( uint16_t width, uint16_t block_height, const int stride,
-                                uint8_t *magref_segment,uint32_t magref_length,
-                                uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+jpeg2000_decode_magref_segment( Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, const int stride,
+                                uint8_t *magref_segment, uint32_t magref_length,
+                                uint8_t pLSB, uint8_t *block_states)
 {
 
     StateVars mag_ref           = { 0 };
+    const uint16_t width = cblk->coord[0][1] - cblk->coord[0][0];
+    const uint16_t block_height = cblk->coord[1][1] - cblk->coord[1][0];
     const uint16_t num_v_stripe = block_height / 4;
     uint16_t height             = 4;
     uint16_t i_start            = 0;
@@ -1155,9 +1142,10 @@ jpeg2000_decode_magref_segment( uint16_t width, uint16_t block_height, const int
                  *  We move column wise, going from one quad to another. See
                  *  Rec. ITU-T T.814, Figure 7.
                  */
-                sp = &sample_buf[j + i * stride];
-                if (jpeg2000_get_state(i, j, stride, HT_SHIFT_SIGMA, block_states) != 0) {
-                    jpeg2000_modify_state(i, j, stride, 1 << HT_SHIFT_REF_IND, block_states);
+                uint8_t *state_p = block_states + (i + 1) * stride + (j + 1);
+                sp = t1->data + j + i * t1->stride;
+                if ((state_p[0] >> HT_SHIFT_SIGMA & 1) != 0) {
+                    state_p[0] |= 1 << HT_SHIFT_REF_IND;
                     bit = jpeg2000_import_magref_bit(&mag_ref, magref_segment, magref_length);
                     tmp = 0xFFFFFFFE | (uint32_t)bit;
                     tmp <<= pLSB;
@@ -1171,9 +1159,10 @@ jpeg2000_decode_magref_segment( uint16_t width, uint16_t block_height, const int
     height = block_height % 4;
     for (int j = 0; j < width; j++) {
         for (int i = i_start; i < i_start + height; i++) {
-            sp = &sample_buf[j + i * stride];
-            if (jpeg2000_get_state(i, j, stride, HT_SHIFT_SIGMA, block_states) != 0) {
-                jpeg2000_modify_state(i, j, stride, 1 << HT_SHIFT_REF_IND, block_states);
+            uint8_t *state_p = block_states + (i + 1) * stride + (j + 1);
+            sp = t1->data + j + i * t1->stride;
+            if ((state_p[0] >> HT_SHIFT_SIGMA & 1) != 0) {
+                state_p[0] |= 1 << HT_SHIFT_REF_IND;
                 bit = jpeg2000_import_magref_bit(&mag_ref, magref_segment, magref_length);
                 tmp = 0xFFFFFFFE | (uint32_t)bit;
                 tmp <<= pLSB;
@@ -1205,22 +1194,15 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
 
     uint8_t num_plhd_passes;    // Number of placeholder passes
 
-    StateVars mag_sgn;          // Magnitude and Sign
-    StateVars mel;              // Adaptive run-length coding
-    StateVars vlc;              // Variable Length coding
     StateVars sig_prop;         // Significance propagation
 
-    MelDecoderState mel_state;
 
     int ret;
 
-    /* Temporary buffers */
-    int32_t *sample_buf = NULL;
+    /* Temporary buffer */
     uint8_t *block_states = NULL;
 
-    int32_t n, val;             // Post-processing
     const uint32_t mask  = UINT32_MAX >> (M_b + 1); // bit mask for ROI detection
-
     uint8_t num_rempass;
 
     const int quad_buf_width = width + 4;
@@ -1277,67 +1259,45 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     Dcup[Lcup - 1] = 0xFF;
     Dcup[Lcup - 2] |= 0x0F;
 
-    /* Magnitude and refinement */
-    jpeg2000_init_zero(&mag_sgn);
-    jpeg2000_bitbuf_refill_forward(&mag_sgn, Dcup, Pcup);
-
-    /* Significance propagation */
-    jpeg2000_init_zero(&sig_prop);
-
-    /* Adaptive run length */
-    jpeg2000_init_mel(&mel, Pcup);
-
-    /* Variable Length coding */
-    jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
-
-    jpeg2000_init_mel_decoder(&mel_state);
-
-    sample_buf = av_calloc(quad_buf_width * quad_buf_height, sizeof(int32_t));
     block_states = av_calloc(quad_buf_width * quad_buf_height, sizeof(uint8_t));
 
-    if (!sample_buf || !block_states) {
+    if (!block_states) {
         ret = AVERROR(ENOMEM);
         goto free;
     }
-    if ((ret = jpeg2000_decode_ht_cleanup_segment(s, cblk, t1, &mel_state, &mel, &vlc,
-                                                  &mag_sgn, Dcup, Lcup, Pcup, pLSB, width,
-                                                  height, quad_buf_width, sample_buf, block_states)) < 0) {
+    if ((ret = jpeg2000_decode_ht_cleanup_segment(t1, cblk, Dcup, Lcup, Pcup, pLSB, quad_buf_width, block_states)) < 0) {
         av_log(s->avctx, AV_LOG_ERROR, "Bad HT cleanup segment\n");
         goto free;
     }
 
     if (z_blk > 1)
-        jpeg2000_decode_sigprop_segment(cblk, width, height, quad_buf_width, Dref, Lref,
-                                        pLSB - 1, sample_buf, block_states);
+        jpeg2000_decode_sigprop_segment(t1, cblk, quad_buf_width, Dref, Lref, pLSB - 1, block_states);
 
     if (z_blk > 2)
-        jpeg2000_decode_magref_segment(width, height, quad_buf_width, Dref, Lref,
-                                       pLSB - 1, sample_buf, block_states);
+        jpeg2000_decode_magref_segment(t1, cblk, quad_buf_width, Dref, Lref, pLSB - 1, block_states);
 
     pLSB = 31 - M_b;
 
     /* Reconstruct the sample values */
     for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            int32_t sign;
+        int32_t *val = t1->data + y * t1->stride;
+        int32_t len = width;
+        for (; len > 0; --len) {
+            int32_t sign = val[0] & INT32_MIN;
+            val[0] &= INT32_MAX;
 
-            n = x + (y * t1->stride);
-            val = sample_buf[x + (y * quad_buf_width)];
-            sign = val & INT32_MIN;
-            val &= INT32_MAX;
             /* ROI shift, if necessary */
-            if (roi_shift && (((uint32_t)val & ~mask) == 0))
-                val <<= roi_shift;
+            if (roi_shift && (((uint32_t)val[0] & ~mask) == 0))
+                val[0] <<= roi_shift;
+            /* Shift down to 1 bit upper from decimal point for reconstruction value (= 0.5) */
+            val[0] >>= pLSB - 1;
             /* Convert sign-magnitude to two's complement. */
             if (sign)
-                val = -val;
-            /* Shift down to 1 bit upper from decimal point for reconstruction value (= 0.5) */
-            val >>= (pLSB - 1);
-            t1->data[n] = val;
+                val[0] = -(val[0] & INT32_MAX);
+            val++;
         }
     }
 free:
-    av_freep(&sample_buf);
     av_freep(&block_states);
     return ret;
 }
@@ -1346,164 +1306,230 @@ free:
  * CtxVLC tables (see Rec. ITU-T T.800, Annex C) as found at
  * https://github.com/osamu620/OpenHTJ2K (author: Osamu Watanabe)
  */
-static const uint16_t dec_cxt_vlc_table1[1024] = {
+static const alignas(32) uint16_t dec_cxt_vlc_table1[1024] = {
         0x0016, 0x006A, 0x0046, 0x00DD, 0x0086, 0x888B, 0x0026, 0x444D, 0x0016, 0x00AA, 0x0046, 0x88AD, 0x0086,
         0x003A, 0x0026, 0x00DE, 0x0016, 0x00CA, 0x0046, 0x009D, 0x0086, 0x005A, 0x0026, 0x222D, 0x0016, 0x009A,
-        0x0046, 0x007D, 0x0086, 0x01FD, 0x0026, 0x007E, 0x0016, 0x006A, 0x0046, 0x88CD, 0x0086, 0x888B, 0x0026,
+        0x0046, 0x007D, 0x0086, 0x10FD, 0x0026, 0x007E, 0x0016, 0x006A, 0x0046, 0x88CD, 0x0086, 0x888B, 0x0026,
         0x111D, 0x0016, 0x00AA, 0x0046, 0x005D, 0x0086, 0x003A, 0x0026, 0x00EE, 0x0016, 0x00CA, 0x0046, 0x00BD,
-        0x0086, 0x005A, 0x0026, 0x11FF, 0x0016, 0x009A, 0x0046, 0x003D, 0x0086, 0x04ED, 0x0026, 0x2AAF, 0x0016,
+        0x0086, 0x005A, 0x0026, 0x11FF, 0x0016, 0x009A, 0x0046, 0x003D, 0x0086, 0x40ED, 0x0026, 0xA2AF, 0x0016,
         0x006A, 0x0046, 0x00DD, 0x0086, 0x888B, 0x0026, 0x444D, 0x0016, 0x00AA, 0x0046, 0x88AD, 0x0086, 0x003A,
         0x0026, 0x44EF, 0x0016, 0x00CA, 0x0046, 0x009D, 0x0086, 0x005A, 0x0026, 0x222D, 0x0016, 0x009A, 0x0046,
-        0x007D, 0x0086, 0x01FD, 0x0026, 0x00BE, 0x0016, 0x006A, 0x0046, 0x88CD, 0x0086, 0x888B, 0x0026, 0x111D,
-        0x0016, 0x00AA, 0x0046, 0x005D, 0x0086, 0x003A, 0x0026, 0x4CCF, 0x0016, 0x00CA, 0x0046, 0x00BD, 0x0086,
-        0x005A, 0x0026, 0x00FE, 0x0016, 0x009A, 0x0046, 0x003D, 0x0086, 0x04ED, 0x0026, 0x006F, 0x0002, 0x0088,
+        0x007D, 0x0086, 0x10FD, 0x0026, 0x00BE, 0x0016, 0x006A, 0x0046, 0x88CD, 0x0086, 0x888B, 0x0026, 0x111D,
+        0x0016, 0x00AA, 0x0046, 0x005D, 0x0086, 0x003A, 0x0026, 0xC4CF, 0x0016, 0x00CA, 0x0046, 0x00BD, 0x0086,
+        0x005A, 0x0026, 0x00FE, 0x0016, 0x009A, 0x0046, 0x003D, 0x0086, 0x40ED, 0x0026, 0x006F, 0x0002, 0x0088,
         0x0002, 0x005C, 0x0002, 0x0018, 0x0002, 0x00DE, 0x0002, 0x0028, 0x0002, 0x009C, 0x0002, 0x004A, 0x0002,
         0x007E, 0x0002, 0x0088, 0x0002, 0x00CC, 0x0002, 0x0018, 0x0002, 0x888F, 0x0002, 0x0028, 0x0002, 0x00FE,
-        0x0002, 0x003A, 0x0002, 0x222F, 0x0002, 0x0088, 0x0002, 0x04FD, 0x0002, 0x0018, 0x0002, 0x00BE, 0x0002,
+        0x0002, 0x003A, 0x0002, 0x222F, 0x0002, 0x0088, 0x0002, 0x40FD, 0x0002, 0x0018, 0x0002, 0x00BE, 0x0002,
         0x0028, 0x0002, 0x00BF, 0x0002, 0x004A, 0x0002, 0x006E, 0x0002, 0x0088, 0x0002, 0x00AC, 0x0002, 0x0018,
         0x0002, 0x444F, 0x0002, 0x0028, 0x0002, 0x00EE, 0x0002, 0x003A, 0x0002, 0x113F, 0x0002, 0x0088, 0x0002,
         0x005C, 0x0002, 0x0018, 0x0002, 0x00CF, 0x0002, 0x0028, 0x0002, 0x009C, 0x0002, 0x004A, 0x0002, 0x006F,
         0x0002, 0x0088, 0x0002, 0x00CC, 0x0002, 0x0018, 0x0002, 0x009F, 0x0002, 0x0028, 0x0002, 0x00EF, 0x0002,
-        0x003A, 0x0002, 0x233F, 0x0002, 0x0088, 0x0002, 0x04FD, 0x0002, 0x0018, 0x0002, 0x00AF, 0x0002, 0x0028,
+        0x003A, 0x0002, 0x323F, 0x0002, 0x0088, 0x0002, 0x40FD, 0x0002, 0x0018, 0x0002, 0x00AF, 0x0002, 0x0028,
         0x0002, 0x44FF, 0x0002, 0x004A, 0x0002, 0x005F, 0x0002, 0x0088, 0x0002, 0x00AC, 0x0002, 0x0018, 0x0002,
         0x007F, 0x0002, 0x0028, 0x0002, 0x00DF, 0x0002, 0x003A, 0x0002, 0x111F, 0x0002, 0x0028, 0x0002, 0x005C,
         0x0002, 0x008A, 0x0002, 0x00BF, 0x0002, 0x0018, 0x0002, 0x00FE, 0x0002, 0x00CC, 0x0002, 0x007E, 0x0002,
-        0x0028, 0x0002, 0x8FFF, 0x0002, 0x004A, 0x0002, 0x007F, 0x0002, 0x0018, 0x0002, 0x00DF, 0x0002, 0x00AC,
-        0x0002, 0x133F, 0x0002, 0x0028, 0x0002, 0x222D, 0x0002, 0x008A, 0x0002, 0x00BE, 0x0002, 0x0018, 0x0002,
-        0x44EF, 0x0002, 0x2AAD, 0x0002, 0x006E, 0x0002, 0x0028, 0x0002, 0x15FF, 0x0002, 0x004A, 0x0002, 0x009E,
+        0x0028, 0x0002, 0xF8FF, 0x0002, 0x004A, 0x0002, 0x007F, 0x0002, 0x0018, 0x0002, 0x00DF, 0x0002, 0x00AC,
+        0x0002, 0x313F, 0x0002, 0x0028, 0x0002, 0x222D, 0x0002, 0x008A, 0x0002, 0x00BE, 0x0002, 0x0018, 0x0002,
+        0x44EF, 0x0002, 0xA2AD, 0x0002, 0x006E, 0x0002, 0x0028, 0x0002, 0x51FF, 0x0002, 0x004A, 0x0002, 0x009E,
         0x0002, 0x0018, 0x0002, 0x00CF, 0x0002, 0x003C, 0x0002, 0x223F, 0x0002, 0x0028, 0x0002, 0x005C, 0x0002,
-        0x008A, 0x0002, 0x2BBF, 0x0002, 0x0018, 0x0002, 0x04EF, 0x0002, 0x00CC, 0x0002, 0x006F, 0x0002, 0x0028,
-        0x0002, 0x27FF, 0x0002, 0x004A, 0x0002, 0x009F, 0x0002, 0x0018, 0x0002, 0x00DE, 0x0002, 0x00AC, 0x0002,
-        0x444F, 0x0002, 0x0028, 0x0002, 0x222D, 0x0002, 0x008A, 0x0002, 0x8AAF, 0x0002, 0x0018, 0x0002, 0x00EE,
-        0x0002, 0x2AAD, 0x0002, 0x005F, 0x0002, 0x0028, 0x0002, 0x44FF, 0x0002, 0x004A, 0x0002, 0x888F, 0x0002,
-        0x0018, 0x0002, 0xAAAF, 0x0002, 0x003C, 0x0002, 0x111F, 0x0004, 0x8FFD, 0x0028, 0x005C, 0x0004, 0x00BC,
-        0x008A, 0x66FF, 0x0004, 0x00CD, 0x0018, 0x111D, 0x0004, 0x009C, 0x003A, 0x8AAF, 0x0004, 0x00FC, 0x0028,
-        0x133D, 0x0004, 0x00AC, 0x004A, 0x3BBF, 0x0004, 0x2BBD, 0x0018, 0x5FFF, 0x0004, 0x006C, 0x157D, 0x455F,
-        0x0004, 0x2FFD, 0x0028, 0x222D, 0x0004, 0x22AD, 0x008A, 0x44EF, 0x0004, 0x00CC, 0x0018, 0x4FFF, 0x0004,
-        0x007C, 0x003A, 0x447F, 0x0004, 0x04DD, 0x0028, 0x233D, 0x0004, 0x009D, 0x004A, 0x00DE, 0x0004, 0x88BD,
-        0x0018, 0xAFFF, 0x0004, 0x115D, 0x1FFD, 0x444F, 0x0004, 0x8FFD, 0x0028, 0x005C, 0x0004, 0x00BC, 0x008A,
-        0x8CEF, 0x0004, 0x00CD, 0x0018, 0x111D, 0x0004, 0x009C, 0x003A, 0x888F, 0x0004, 0x00FC, 0x0028, 0x133D,
-        0x0004, 0x00AC, 0x004A, 0x44DF, 0x0004, 0x2BBD, 0x0018, 0x8AFF, 0x0004, 0x006C, 0x157D, 0x006F, 0x0004,
-        0x2FFD, 0x0028, 0x222D, 0x0004, 0x22AD, 0x008A, 0x00EE, 0x0004, 0x00CC, 0x0018, 0x2EEF, 0x0004, 0x007C,
-        0x003A, 0x277F, 0x0004, 0x04DD, 0x0028, 0x233D, 0x0004, 0x009D, 0x004A, 0x1BBF, 0x0004, 0x88BD, 0x0018,
-        0x37FF, 0x0004, 0x115D, 0x1FFD, 0x333F, 0x0002, 0x0088, 0x0002, 0x02ED, 0x0002, 0x00CA, 0x0002, 0x4CCF,
-        0x0002, 0x0048, 0x0002, 0x23FF, 0x0002, 0x001A, 0x0002, 0x888F, 0x0002, 0x0088, 0x0002, 0x006C, 0x0002,
+        0x008A, 0x0002, 0xB2BF, 0x0002, 0x0018, 0x0002, 0x40EF, 0x0002, 0x00CC, 0x0002, 0x006F, 0x0002, 0x0028,
+        0x0002, 0x72FF, 0x0002, 0x004A, 0x0002, 0x009F, 0x0002, 0x0018, 0x0002, 0x00DE, 0x0002, 0x00AC, 0x0002,
+        0x444F, 0x0002, 0x0028, 0x0002, 0x222D, 0x0002, 0x008A, 0x0002, 0xA8AF, 0x0002, 0x0018, 0x0002, 0x00EE,
+        0x0002, 0xA2AD, 0x0002, 0x005F, 0x0002, 0x0028, 0x0002, 0x44FF, 0x0002, 0x004A, 0x0002, 0x888F, 0x0002,
+        0x0018, 0x0002, 0xAAAF, 0x0002, 0x003C, 0x0002, 0x111F, 0x0004, 0xF8FD, 0x0028, 0x005C, 0x0004, 0x00BC,
+        0x008A, 0x66FF, 0x0004, 0x00CD, 0x0018, 0x111D, 0x0004, 0x009C, 0x003A, 0xA8AF, 0x0004, 0x00FC, 0x0028,
+        0x313D, 0x0004, 0x00AC, 0x004A, 0xB3BF, 0x0004, 0xB2BD, 0x0018, 0xF5FF, 0x0004, 0x006C, 0x517D, 0x545F,
+        0x0004, 0xF2FD, 0x0028, 0x222D, 0x0004, 0x22AD, 0x008A, 0x44EF, 0x0004, 0x00CC, 0x0018, 0xF4FF, 0x0004,
+        0x007C, 0x003A, 0x447F, 0x0004, 0x40DD, 0x0028, 0x323D, 0x0004, 0x009D, 0x004A, 0x00DE, 0x0004, 0x88BD,
+        0x0018, 0xFAFF, 0x0004, 0x115D, 0xF1FD, 0x444F, 0x0004, 0xF8FD, 0x0028, 0x005C, 0x0004, 0x00BC, 0x008A,
+        0xC8EF, 0x0004, 0x00CD, 0x0018, 0x111D, 0x0004, 0x009C, 0x003A, 0x888F, 0x0004, 0x00FC, 0x0028, 0x313D,
+        0x0004, 0x00AC, 0x004A, 0x44DF, 0x0004, 0xB2BD, 0x0018, 0xA8FF, 0x0004, 0x006C, 0x517D, 0x006F, 0x0004,
+        0xF2FD, 0x0028, 0x222D, 0x0004, 0x22AD, 0x008A, 0x00EE, 0x0004, 0x00CC, 0x0018, 0xE2EF, 0x0004, 0x007C,
+        0x003A, 0x727F, 0x0004, 0x40DD, 0x0028, 0x323D, 0x0004, 0x009D, 0x004A, 0xB1BF, 0x0004, 0x88BD, 0x0018,
+        0x73FF, 0x0004, 0x115D, 0xF1FD, 0x333F, 0x0002, 0x0088, 0x0002, 0x20ED, 0x0002, 0x00CA, 0x0002, 0xC4CF,
+        0x0002, 0x0048, 0x0002, 0x32FF, 0x0002, 0x001A, 0x0002, 0x888F, 0x0002, 0x0088, 0x0002, 0x006C, 0x0002,
         0x002A, 0x0002, 0x00AF, 0x0002, 0x0048, 0x0002, 0x22EF, 0x0002, 0x00AC, 0x0002, 0x005F, 0x0002, 0x0088,
         0x0002, 0x444D, 0x0002, 0x00CA, 0x0002, 0xCCCF, 0x0002, 0x0048, 0x0002, 0x00FE, 0x0002, 0x001A, 0x0002,
         0x006F, 0x0002, 0x0088, 0x0002, 0x005C, 0x0002, 0x002A, 0x0002, 0x009F, 0x0002, 0x0048, 0x0002, 0x00DF,
-        0x0002, 0x03FD, 0x0002, 0x222F, 0x0002, 0x0088, 0x0002, 0x02ED, 0x0002, 0x00CA, 0x0002, 0x8CCF, 0x0002,
+        0x0002, 0x30FD, 0x0002, 0x222F, 0x0002, 0x0088, 0x0002, 0x20ED, 0x0002, 0x00CA, 0x0002, 0xC8CF, 0x0002,
         0x0048, 0x0002, 0x11FF, 0x0002, 0x001A, 0x0002, 0x007E, 0x0002, 0x0088, 0x0002, 0x006C, 0x0002, 0x002A,
         0x0002, 0x007F, 0x0002, 0x0048, 0x0002, 0x00EE, 0x0002, 0x00AC, 0x0002, 0x003E, 0x0002, 0x0088, 0x0002,
         0x444D, 0x0002, 0x00CA, 0x0002, 0x00BE, 0x0002, 0x0048, 0x0002, 0x00BF, 0x0002, 0x001A, 0x0002, 0x003F,
         0x0002, 0x0088, 0x0002, 0x005C, 0x0002, 0x002A, 0x0002, 0x009E, 0x0002, 0x0048, 0x0002, 0x00DE, 0x0002,
-        0x03FD, 0x0002, 0x111F, 0x0004, 0x8AED, 0x0048, 0x888D, 0x0004, 0x00DC, 0x00CA, 0x3FFF, 0x0004, 0xCFFD,
-        0x002A, 0x003D, 0x0004, 0x00BC, 0x005A, 0x8DDF, 0x0004, 0x8FFD, 0x0048, 0x006C, 0x0004, 0x027D, 0x008A,
-        0x99FF, 0x0004, 0x00EC, 0x00FA, 0x003C, 0x0004, 0x00AC, 0x001A, 0x009F, 0x0004, 0x2FFD, 0x0048, 0x007C,
-        0x0004, 0x44CD, 0x00CA, 0x67FF, 0x0004, 0x1FFD, 0x002A, 0x444D, 0x0004, 0x00AD, 0x005A, 0x8CCF, 0x0004,
-        0x4FFD, 0x0048, 0x445D, 0x0004, 0x01BD, 0x008A, 0x4EEF, 0x0004, 0x45DD, 0x00FA, 0x111D, 0x0004, 0x009C,
-        0x001A, 0x222F, 0x0004, 0x8AED, 0x0048, 0x888D, 0x0004, 0x00DC, 0x00CA, 0xAFFF, 0x0004, 0xCFFD, 0x002A,
-        0x003D, 0x0004, 0x00BC, 0x005A, 0x11BF, 0x0004, 0x8FFD, 0x0048, 0x006C, 0x0004, 0x027D, 0x008A, 0x22EF,
-        0x0004, 0x00EC, 0x00FA, 0x003C, 0x0004, 0x00AC, 0x001A, 0x227F, 0x0004, 0x2FFD, 0x0048, 0x007C, 0x0004,
-        0x44CD, 0x00CA, 0x5DFF, 0x0004, 0x1FFD, 0x002A, 0x444D, 0x0004, 0x00AD, 0x005A, 0x006F, 0x0004, 0x4FFD,
-        0x0048, 0x445D, 0x0004, 0x01BD, 0x008A, 0x11DF, 0x0004, 0x45DD, 0x00FA, 0x111D, 0x0004, 0x009C, 0x001A,
-        0x155F, 0x0006, 0x00FC, 0x0018, 0x111D, 0x0048, 0x888D, 0x00AA, 0x4DDF, 0x0006, 0x2AAD, 0x005A, 0x67FF,
-        0x0028, 0x223D, 0x00BC, 0xAAAF, 0x0006, 0x00EC, 0x0018, 0x5FFF, 0x0048, 0x006C, 0x008A, 0xCCCF, 0x0006,
-        0x009D, 0x00CA, 0x44EF, 0x0028, 0x003C, 0x8FFD, 0x137F, 0x0006, 0x8EED, 0x0018, 0x1FFF, 0x0048, 0x007C,
-        0x00AA, 0x4CCF, 0x0006, 0x227D, 0x005A, 0x1DDF, 0x0028, 0x444D, 0x4FFD, 0x155F, 0x0006, 0x00DC, 0x0018,
-        0x2EEF, 0x0048, 0x445D, 0x008A, 0x22BF, 0x0006, 0x009C, 0x00CA, 0x8CDF, 0x0028, 0x222D, 0x2FFD, 0x226F,
-        0x0006, 0x00FC, 0x0018, 0x111D, 0x0048, 0x888D, 0x00AA, 0x1BBF, 0x0006, 0x2AAD, 0x005A, 0x33FF, 0x0028,
-        0x223D, 0x00BC, 0x8AAF, 0x0006, 0x00EC, 0x0018, 0x9BFF, 0x0048, 0x006C, 0x008A, 0x8ABF, 0x0006, 0x009D,
-        0x00CA, 0x4EEF, 0x0028, 0x003C, 0x8FFD, 0x466F, 0x0006, 0x8EED, 0x0018, 0xCFFF, 0x0048, 0x007C, 0x00AA,
-        0x8CCF, 0x0006, 0x227D, 0x005A, 0xAEEF, 0x0028, 0x444D, 0x4FFD, 0x477F, 0x0006, 0x00DC, 0x0018, 0xAFFF,
-        0x0048, 0x445D, 0x008A, 0x2BBF, 0x0006, 0x009C, 0x00CA, 0x44DF, 0x0028, 0x222D, 0x2FFD, 0x133F, 0x00F6,
-        0xAFFD, 0x1FFB, 0x003C, 0x0008, 0x23BD, 0x007A, 0x11DF, 0x00F6, 0x45DD, 0x2FFB, 0x4EEF, 0x00DA, 0x177D,
-        0xCFFD, 0x377F, 0x00F6, 0x3FFD, 0x8FFB, 0x111D, 0x0008, 0x009C, 0x005A, 0x1BBF, 0x00F6, 0x00CD, 0x00BA,
-        0x8DDF, 0x4FFB, 0x006C, 0x9BFD, 0x455F, 0x00F6, 0x67FD, 0x1FFB, 0x002C, 0x0008, 0x00AC, 0x007A, 0x009F,
-        0x00F6, 0x00AD, 0x2FFB, 0x7FFF, 0x00DA, 0x004C, 0x5FFD, 0x477F, 0x00F6, 0x00EC, 0x8FFB, 0x001C, 0x0008,
-        0x008C, 0x005A, 0x888F, 0x00F6, 0x00CC, 0x00BA, 0x2EEF, 0x4FFB, 0x115D, 0x8AED, 0x113F, 0x00F6, 0xAFFD,
-        0x1FFB, 0x003C, 0x0008, 0x23BD, 0x007A, 0x1DDF, 0x00F6, 0x45DD, 0x2FFB, 0xBFFF, 0x00DA, 0x177D, 0xCFFD,
-        0x447F, 0x00F6, 0x3FFD, 0x8FFB, 0x111D, 0x0008, 0x009C, 0x005A, 0x277F, 0x00F6, 0x00CD, 0x00BA, 0x22EF,
-        0x4FFB, 0x006C, 0x9BFD, 0x444F, 0x00F6, 0x67FD, 0x1FFB, 0x002C, 0x0008, 0x00AC, 0x007A, 0x11BF, 0x00F6,
-        0x00AD, 0x2FFB, 0xFFFF, 0x00DA, 0x004C, 0x5FFD, 0x233F, 0x00F6, 0x00EC, 0x8FFB, 0x001C, 0x0008, 0x008C,
-        0x005A, 0x006F, 0x00F6, 0x00CC, 0x00BA, 0x8BBF, 0x4FFB, 0x115D, 0x8AED, 0x222F};
+        0x30FD, 0x0002, 0x111F, 0x0004, 0xA8ED, 0x0048, 0x888D, 0x0004, 0x00DC, 0x00CA, 0xF3FF, 0x0004, 0xFCFD,
+        0x002A, 0x003D, 0x0004, 0x00BC, 0x005A, 0xD8DF, 0x0004, 0xF8FD, 0x0048, 0x006C, 0x0004, 0x207D, 0x008A,
+        0x99FF, 0x0004, 0x00EC, 0x00FA, 0x003C, 0x0004, 0x00AC, 0x001A, 0x009F, 0x0004, 0xF2FD, 0x0048, 0x007C,
+        0x0004, 0x44CD, 0x00CA, 0x76FF, 0x0004, 0xF1FD, 0x002A, 0x444D, 0x0004, 0x00AD, 0x005A, 0xC8CF, 0x0004,
+        0xF4FD, 0x0048, 0x445D, 0x0004, 0x10BD, 0x008A, 0xE4EF, 0x0004, 0x54DD, 0x00FA, 0x111D, 0x0004, 0x009C,
+        0x001A, 0x222F, 0x0004, 0xA8ED, 0x0048, 0x888D, 0x0004, 0x00DC, 0x00CA, 0xFAFF, 0x0004, 0xFCFD, 0x002A,
+        0x003D, 0x0004, 0x00BC, 0x005A, 0x11BF, 0x0004, 0xF8FD, 0x0048, 0x006C, 0x0004, 0x207D, 0x008A, 0x22EF,
+        0x0004, 0x00EC, 0x00FA, 0x003C, 0x0004, 0x00AC, 0x001A, 0x227F, 0x0004, 0xF2FD, 0x0048, 0x007C, 0x0004,
+        0x44CD, 0x00CA, 0xD5FF, 0x0004, 0xF1FD, 0x002A, 0x444D, 0x0004, 0x00AD, 0x005A, 0x006F, 0x0004, 0xF4FD,
+        0x0048, 0x445D, 0x0004, 0x10BD, 0x008A, 0x11DF, 0x0004, 0x54DD, 0x00FA, 0x111D, 0x0004, 0x009C, 0x001A,
+        0x515F, 0x0006, 0x00FC, 0x0018, 0x111D, 0x0048, 0x888D, 0x00AA, 0xD4DF, 0x0006, 0xA2AD, 0x005A, 0x76FF,
+        0x0028, 0x223D, 0x00BC, 0xAAAF, 0x0006, 0x00EC, 0x0018, 0xF5FF, 0x0048, 0x006C, 0x008A, 0xCCCF, 0x0006,
+        0x009D, 0x00CA, 0x44EF, 0x0028, 0x003C, 0xF8FD, 0x317F, 0x0006, 0xE8ED, 0x0018, 0xF1FF, 0x0048, 0x007C,
+        0x00AA, 0xC4CF, 0x0006, 0x227D, 0x005A, 0xD1DF, 0x0028, 0x444D, 0xF4FD, 0x515F, 0x0006, 0x00DC, 0x0018,
+        0xE2EF, 0x0048, 0x445D, 0x008A, 0x22BF, 0x0006, 0x009C, 0x00CA, 0xC8DF, 0x0028, 0x222D, 0xF2FD, 0x226F,
+        0x0006, 0x00FC, 0x0018, 0x111D, 0x0048, 0x888D, 0x00AA, 0xB1BF, 0x0006, 0xA2AD, 0x005A, 0x33FF, 0x0028,
+        0x223D, 0x00BC, 0xA8AF, 0x0006, 0x00EC, 0x0018, 0xB9FF, 0x0048, 0x006C, 0x008A, 0xA8BF, 0x0006, 0x009D,
+        0x00CA, 0xE4EF, 0x0028, 0x003C, 0xF8FD, 0x646F, 0x0006, 0xE8ED, 0x0018, 0xFCFF, 0x0048, 0x007C, 0x00AA,
+        0xC8CF, 0x0006, 0x227D, 0x005A, 0xEAEF, 0x0028, 0x444D, 0xF4FD, 0x747F, 0x0006, 0x00DC, 0x0018, 0xFAFF,
+        0x0048, 0x445D, 0x008A, 0xB2BF, 0x0006, 0x009C, 0x00CA, 0x44DF, 0x0028, 0x222D, 0xF2FD, 0x313F, 0x00F6,
+        0xFAFD, 0xF1FB, 0x003C, 0x0008, 0x32BD, 0x007A, 0x11DF, 0x00F6, 0x54DD, 0xF2FB, 0xE4EF, 0x00DA, 0x717D,
+        0xFCFD, 0x737F, 0x00F6, 0xF3FD, 0xF8FB, 0x111D, 0x0008, 0x009C, 0x005A, 0xB1BF, 0x00F6, 0x00CD, 0x00BA,
+        0xD8DF, 0xF4FB, 0x006C, 0xB9FD, 0x545F, 0x00F6, 0x76FD, 0xF1FB, 0x002C, 0x0008, 0x00AC, 0x007A, 0x009F,
+        0x00F6, 0x00AD, 0xF2FB, 0xF7FF, 0x00DA, 0x004C, 0xF5FD, 0x747F, 0x00F6, 0x00EC, 0xF8FB, 0x001C, 0x0008,
+        0x008C, 0x005A, 0x888F, 0x00F6, 0x00CC, 0x00BA, 0xE2EF, 0xF4FB, 0x115D, 0xA8ED, 0x113F, 0x00F6, 0xFAFD,
+        0xF1FB, 0x003C, 0x0008, 0x32BD, 0x007A, 0xD1DF, 0x00F6, 0x54DD, 0xF2FB, 0xFBFF, 0x00DA, 0x717D, 0xFCFD,
+        0x447F, 0x00F6, 0xF3FD, 0xF8FB, 0x111D, 0x0008, 0x009C, 0x005A, 0x727F, 0x00F6, 0x00CD, 0x00BA, 0x22EF,
+        0xF4FB, 0x006C, 0xB9FD, 0x444F, 0x00F6, 0x76FD, 0xF1FB, 0x002C, 0x0008, 0x00AC, 0x007A, 0x11BF, 0x00F6,
+        0x00AD, 0xF2FB, 0xFFFF, 0x00DA, 0x004C, 0xF5FD, 0x323F, 0x00F6, 0x00EC, 0xF8FB, 0x001C, 0x0008, 0x008C,
+        0x005A, 0x006F, 0x00F6, 0x00CC, 0x00BA, 0xB8BF, 0xF4FB, 0x115D, 0xA8ED, 0x222F};
 
-static const uint16_t dec_cxt_vlc_table0[1024] = {
-        0x0026, 0x00AA, 0x0046, 0x006C, 0x0086, 0x8AED, 0x0018, 0x8DDF, 0x0026, 0x01BD, 0x0046, 0x5FFF, 0x0086,
-        0x027D, 0x005A, 0x155F, 0x0026, 0x003A, 0x0046, 0x444D, 0x0086, 0x4CCD, 0x0018, 0xCCCF, 0x0026, 0x2EFD,
-        0x0046, 0x99FF, 0x0086, 0x009C, 0x00CA, 0x133F, 0x0026, 0x00AA, 0x0046, 0x445D, 0x0086, 0x8CCD, 0x0018,
-        0x11DF, 0x0026, 0x4FFD, 0x0046, 0xCFFF, 0x0086, 0x009D, 0x005A, 0x007E, 0x0026, 0x003A, 0x0046, 0x1FFF,
-        0x0086, 0x88AD, 0x0018, 0x00BE, 0x0026, 0x8FFD, 0x0046, 0x4EEF, 0x0086, 0x888D, 0x00CA, 0x111F, 0x0026,
-        0x00AA, 0x0046, 0x006C, 0x0086, 0x8AED, 0x0018, 0x45DF, 0x0026, 0x01BD, 0x0046, 0x22EF, 0x0086, 0x027D,
-        0x005A, 0x227F, 0x0026, 0x003A, 0x0046, 0x444D, 0x0086, 0x4CCD, 0x0018, 0x11BF, 0x0026, 0x2EFD, 0x0046,
-        0x00FE, 0x0086, 0x009C, 0x00CA, 0x223F, 0x0026, 0x00AA, 0x0046, 0x445D, 0x0086, 0x8CCD, 0x0018, 0x00DE,
-        0x0026, 0x4FFD, 0x0046, 0xABFF, 0x0086, 0x009D, 0x005A, 0x006F, 0x0026, 0x003A, 0x0046, 0x6EFF, 0x0086,
-        0x88AD, 0x0018, 0x2AAF, 0x0026, 0x8FFD, 0x0046, 0x00EE, 0x0086, 0x888D, 0x00CA, 0x222F, 0x0004, 0x00CA,
-        0x0088, 0x027D, 0x0004, 0x4CCD, 0x0028, 0x00FE, 0x0004, 0x2AFD, 0x0048, 0x005C, 0x0004, 0x009D, 0x0018,
-        0x00DE, 0x0004, 0x01BD, 0x0088, 0x006C, 0x0004, 0x88AD, 0x0028, 0x11DF, 0x0004, 0x8AED, 0x0048, 0x003C,
+static const alignas(32) uint16_t dec_cxt_vlc_table0[1024] = {
+        0x0026, 0x00AA, 0x0046, 0x006C, 0x0086, 0xA8ED, 0x0018, 0xD8DF, 0x0026, 0x10BD, 0x0046, 0xF5FF, 0x0086,
+        0x207D, 0x005A, 0x515F, 0x0026, 0x003A, 0x0046, 0x444D, 0x0086, 0xC4CD, 0x0018, 0xCCCF, 0x0026, 0xE2FD,
+        0x0046, 0x99FF, 0x0086, 0x009C, 0x00CA, 0x313F, 0x0026, 0x00AA, 0x0046, 0x445D, 0x0086, 0xC8CD, 0x0018,
+        0x11DF, 0x0026, 0xF4FD, 0x0046, 0xFCFF, 0x0086, 0x009D, 0x005A, 0x007E, 0x0026, 0x003A, 0x0046, 0xF1FF,
+        0x0086, 0x88AD, 0x0018, 0x00BE, 0x0026, 0xF8FD, 0x0046, 0xE4EF, 0x0086, 0x888D, 0x00CA, 0x111F, 0x0026,
+        0x00AA, 0x0046, 0x006C, 0x0086, 0xA8ED, 0x0018, 0x54DF, 0x0026, 0x10BD, 0x0046, 0x22EF, 0x0086, 0x207D,
+        0x005A, 0x227F, 0x0026, 0x003A, 0x0046, 0x444D, 0x0086, 0xC4CD, 0x0018, 0x11BF, 0x0026, 0xE2FD, 0x0046,
+        0x00FE, 0x0086, 0x009C, 0x00CA, 0x223F, 0x0026, 0x00AA, 0x0046, 0x445D, 0x0086, 0xC8CD, 0x0018, 0x00DE,
+        0x0026, 0xF4FD, 0x0046, 0xBAFF, 0x0086, 0x009D, 0x005A, 0x006F, 0x0026, 0x003A, 0x0046, 0xE6FF, 0x0086,
+        0x88AD, 0x0018, 0xA2AF, 0x0026, 0xF8FD, 0x0046, 0x00EE, 0x0086, 0x888D, 0x00CA, 0x222F, 0x0004, 0x00CA,
+        0x0088, 0x207D, 0x0004, 0xC4CD, 0x0028, 0x00FE, 0x0004, 0xA2FD, 0x0048, 0x005C, 0x0004, 0x009D, 0x0018,
+        0x00DE, 0x0004, 0x10BD, 0x0088, 0x006C, 0x0004, 0x88AD, 0x0028, 0x11DF, 0x0004, 0xA8ED, 0x0048, 0x003C,
         0x0004, 0x888D, 0x0018, 0x111F, 0x0004, 0x00CA, 0x0088, 0x006D, 0x0004, 0x88CD, 0x0028, 0x88FF, 0x0004,
-        0x8BFD, 0x0048, 0x444D, 0x0004, 0x009C, 0x0018, 0x00BE, 0x0004, 0x4EFD, 0x0088, 0x445D, 0x0004, 0x00AC,
-        0x0028, 0x00EE, 0x0004, 0x45DD, 0x0048, 0x222D, 0x0004, 0x003D, 0x0018, 0x007E, 0x0004, 0x00CA, 0x0088,
-        0x027D, 0x0004, 0x4CCD, 0x0028, 0x1FFF, 0x0004, 0x2AFD, 0x0048, 0x005C, 0x0004, 0x009D, 0x0018, 0x11BF,
-        0x0004, 0x01BD, 0x0088, 0x006C, 0x0004, 0x88AD, 0x0028, 0x22EF, 0x0004, 0x8AED, 0x0048, 0x003C, 0x0004,
-        0x888D, 0x0018, 0x227F, 0x0004, 0x00CA, 0x0088, 0x006D, 0x0004, 0x88CD, 0x0028, 0x4EEF, 0x0004, 0x8BFD,
-        0x0048, 0x444D, 0x0004, 0x009C, 0x0018, 0x2AAF, 0x0004, 0x4EFD, 0x0088, 0x445D, 0x0004, 0x00AC, 0x0028,
-        0x8DDF, 0x0004, 0x45DD, 0x0048, 0x222D, 0x0004, 0x003D, 0x0018, 0x155F, 0x0004, 0x005A, 0x0088, 0x006C,
-        0x0004, 0x88DD, 0x0028, 0x23FF, 0x0004, 0x11FD, 0x0048, 0x444D, 0x0004, 0x00AD, 0x0018, 0x00BE, 0x0004,
-        0x137D, 0x0088, 0x155D, 0x0004, 0x00CC, 0x0028, 0x00DE, 0x0004, 0x02ED, 0x0048, 0x111D, 0x0004, 0x009D,
-        0x0018, 0x007E, 0x0004, 0x005A, 0x0088, 0x455D, 0x0004, 0x44CD, 0x0028, 0x00EE, 0x0004, 0x1FFD, 0x0048,
-        0x003C, 0x0004, 0x00AC, 0x0018, 0x555F, 0x0004, 0x47FD, 0x0088, 0x113D, 0x0004, 0x02BD, 0x0028, 0x477F,
-        0x0004, 0x4CDD, 0x0048, 0x8FFF, 0x0004, 0x009C, 0x0018, 0x222F, 0x0004, 0x005A, 0x0088, 0x006C, 0x0004,
-        0x88DD, 0x0028, 0x00FE, 0x0004, 0x11FD, 0x0048, 0x444D, 0x0004, 0x00AD, 0x0018, 0x888F, 0x0004, 0x137D,
-        0x0088, 0x155D, 0x0004, 0x00CC, 0x0028, 0x8CCF, 0x0004, 0x02ED, 0x0048, 0x111D, 0x0004, 0x009D, 0x0018,
-        0x006F, 0x0004, 0x005A, 0x0088, 0x455D, 0x0004, 0x44CD, 0x0028, 0x1DDF, 0x0004, 0x1FFD, 0x0048, 0x003C,
-        0x0004, 0x00AC, 0x0018, 0x227F, 0x0004, 0x47FD, 0x0088, 0x113D, 0x0004, 0x02BD, 0x0028, 0x22BF, 0x0004,
-        0x4CDD, 0x0048, 0x22EF, 0x0004, 0x009C, 0x0018, 0x233F, 0x0006, 0x4DDD, 0x4FFB, 0xCFFF, 0x0018, 0x113D,
-        0x005A, 0x888F, 0x0006, 0x23BD, 0x008A, 0x00EE, 0x002A, 0x155D, 0xAAFD, 0x277F, 0x0006, 0x44CD, 0x8FFB,
-        0x44EF, 0x0018, 0x467D, 0x004A, 0x2AAF, 0x0006, 0x00AC, 0x555B, 0x99DF, 0x1FFB, 0x003C, 0x5FFD, 0x266F,
-        0x0006, 0x1DDD, 0x4FFB, 0x6EFF, 0x0018, 0x177D, 0x005A, 0x1BBF, 0x0006, 0x88AD, 0x008A, 0x5DDF, 0x002A,
-        0x444D, 0x2FFD, 0x667F, 0x0006, 0x00CC, 0x8FFB, 0x2EEF, 0x0018, 0x455D, 0x004A, 0x119F, 0x0006, 0x009C,
-        0x555B, 0x8CCF, 0x1FFB, 0x111D, 0x8CED, 0x006E, 0x0006, 0x4DDD, 0x4FFB, 0x3FFF, 0x0018, 0x113D, 0x005A,
-        0x11BF, 0x0006, 0x23BD, 0x008A, 0x8DDF, 0x002A, 0x155D, 0xAAFD, 0x222F, 0x0006, 0x44CD, 0x8FFB, 0x00FE,
-        0x0018, 0x467D, 0x004A, 0x899F, 0x0006, 0x00AC, 0x555B, 0x00DE, 0x1FFB, 0x003C, 0x5FFD, 0x446F, 0x0006,
-        0x1DDD, 0x4FFB, 0x9BFF, 0x0018, 0x177D, 0x005A, 0x00BE, 0x0006, 0x88AD, 0x008A, 0xCDDF, 0x002A, 0x444D,
-        0x2FFD, 0x007E, 0x0006, 0x00CC, 0x8FFB, 0x4EEF, 0x0018, 0x455D, 0x004A, 0x377F, 0x0006, 0x009C, 0x555B,
-        0x8BBF, 0x1FFB, 0x111D, 0x8CED, 0x233F, 0x0004, 0x00AA, 0x0088, 0x047D, 0x0004, 0x01DD, 0x0028, 0x11DF,
-        0x0004, 0x27FD, 0x0048, 0x005C, 0x0004, 0x8AAD, 0x0018, 0x2BBF, 0x0004, 0x009C, 0x0088, 0x006C, 0x0004,
-        0x00CC, 0x0028, 0x00EE, 0x0004, 0x8CED, 0x0048, 0x222D, 0x0004, 0x888D, 0x0018, 0x007E, 0x0004, 0x00AA,
-        0x0088, 0x006D, 0x0004, 0x88CD, 0x0028, 0x00FE, 0x0004, 0x19FD, 0x0048, 0x003C, 0x0004, 0x2AAD, 0x0018,
-        0xAAAF, 0x0004, 0x8BFD, 0x0088, 0x005D, 0x0004, 0x00BD, 0x0028, 0x4CCF, 0x0004, 0x44ED, 0x0048, 0x4FFF,
-        0x0004, 0x223D, 0x0018, 0x111F, 0x0004, 0x00AA, 0x0088, 0x047D, 0x0004, 0x01DD, 0x0028, 0x99FF, 0x0004,
-        0x27FD, 0x0048, 0x005C, 0x0004, 0x8AAD, 0x0018, 0x00BE, 0x0004, 0x009C, 0x0088, 0x006C, 0x0004, 0x00CC,
-        0x0028, 0x00DE, 0x0004, 0x8CED, 0x0048, 0x222D, 0x0004, 0x888D, 0x0018, 0x444F, 0x0004, 0x00AA, 0x0088,
-        0x006D, 0x0004, 0x88CD, 0x0028, 0x2EEF, 0x0004, 0x19FD, 0x0048, 0x003C, 0x0004, 0x2AAD, 0x0018, 0x447F,
-        0x0004, 0x8BFD, 0x0088, 0x005D, 0x0004, 0x00BD, 0x0028, 0x009F, 0x0004, 0x44ED, 0x0048, 0x67FF, 0x0004,
-        0x223D, 0x0018, 0x133F, 0x0006, 0x00CC, 0x008A, 0x9DFF, 0x2FFB, 0x467D, 0x1FFD, 0x99BF, 0x0006, 0x2AAD,
-        0x002A, 0x66EF, 0x4FFB, 0x005C, 0x2EED, 0x377F, 0x0006, 0x89BD, 0x004A, 0x00FE, 0x8FFB, 0x006C, 0x67FD,
-        0x889F, 0x0006, 0x888D, 0x001A, 0x5DDF, 0x00AA, 0x222D, 0x89DD, 0x444F, 0x0006, 0x2BBD, 0x008A, 0xCFFF,
-        0x2FFB, 0x226D, 0x009C, 0x00BE, 0x0006, 0xAAAD, 0x002A, 0x1DDF, 0x4FFB, 0x003C, 0x4DDD, 0x466F, 0x0006,
-        0x8AAD, 0x004A, 0xAEEF, 0x8FFB, 0x445D, 0x8EED, 0x177F, 0x0006, 0x233D, 0x001A, 0x4CCF, 0x00AA, 0xAFFF,
-        0x88CD, 0x133F, 0x0006, 0x00CC, 0x008A, 0x77FF, 0x2FFB, 0x467D, 0x1FFD, 0x3BBF, 0x0006, 0x2AAD, 0x002A,
-        0x00EE, 0x4FFB, 0x005C, 0x2EED, 0x007E, 0x0006, 0x89BD, 0x004A, 0x4EEF, 0x8FFB, 0x006C, 0x67FD, 0x667F,
-        0x0006, 0x888D, 0x001A, 0x00DE, 0x00AA, 0x222D, 0x89DD, 0x333F, 0x0006, 0x2BBD, 0x008A, 0x57FF, 0x2FFB,
-        0x226D, 0x009C, 0x199F, 0x0006, 0xAAAD, 0x002A, 0x99DF, 0x4FFB, 0x003C, 0x4DDD, 0x155F, 0x0006, 0x8AAD,
-        0x004A, 0xCEEF, 0x8FFB, 0x445D, 0x8EED, 0x277F, 0x0006, 0x233D, 0x001A, 0x1BBF, 0x00AA, 0x3FFF, 0x88CD,
-        0x111F, 0x0006, 0x45DD, 0x2FFB, 0x111D, 0x0018, 0x467D, 0x8FFD, 0xCCCF, 0x0006, 0x19BD, 0x004A, 0x22EF,
-        0x002A, 0x222D, 0x3FFD, 0x888F, 0x0006, 0x00CC, 0x008A, 0x00FE, 0x0018, 0x115D, 0xCFFD, 0x8AAF, 0x0006,
-        0x00AC, 0x003A, 0x8CDF, 0x1FFB, 0x133D, 0x66FD, 0x466F, 0x0006, 0x8CCD, 0x2FFB, 0x5FFF, 0x0018, 0x006C,
-        0x4FFD, 0xABBF, 0x0006, 0x22AD, 0x004A, 0x00EE, 0x002A, 0x233D, 0xAEFD, 0x377F, 0x0006, 0x2BBD, 0x008A,
-        0x55DF, 0x0018, 0x005C, 0x177D, 0x119F, 0x0006, 0x009C, 0x003A, 0x4CCF, 0x1FFB, 0x333D, 0x8EED, 0x444F,
-        0x0006, 0x45DD, 0x2FFB, 0x111D, 0x0018, 0x467D, 0x8FFD, 0x99BF, 0x0006, 0x19BD, 0x004A, 0x2EEF, 0x002A,
-        0x222D, 0x3FFD, 0x667F, 0x0006, 0x00CC, 0x008A, 0x4EEF, 0x0018, 0x115D, 0xCFFD, 0x899F, 0x0006, 0x00AC,
-        0x003A, 0x00DE, 0x1FFB, 0x133D, 0x66FD, 0x226F, 0x0006, 0x8CCD, 0x2FFB, 0x9BFF, 0x0018, 0x006C, 0x4FFD,
-        0x00BE, 0x0006, 0x22AD, 0x004A, 0x1DDF, 0x002A, 0x233D, 0xAEFD, 0x007E, 0x0006, 0x2BBD, 0x008A, 0xCEEF,
-        0x0018, 0x005C, 0x177D, 0x277F, 0x0006, 0x009C, 0x003A, 0x8BBF, 0x1FFB, 0x333D, 0x8EED, 0x455F, 0x1FF9,
-        0x1DDD, 0xAFFB, 0x00DE, 0x8FF9, 0x001C, 0xFFFB, 0x477F, 0x4FF9, 0x177D, 0x3FFB, 0x3BBF, 0x2FF9, 0xAEEF,
-        0x8EED, 0x444F, 0x1FF9, 0x22AD, 0x000A, 0x8BBF, 0x8FF9, 0x00FE, 0xCFFD, 0x007E, 0x4FF9, 0x115D, 0x5FFB,
-        0x577F, 0x2FF9, 0x8DDF, 0x2EED, 0x333F, 0x1FF9, 0x2BBD, 0xAFFB, 0x88CF, 0x8FF9, 0xBFFF, 0xFFFB, 0x377F,
-        0x4FF9, 0x006D, 0x3FFB, 0x00BE, 0x2FF9, 0x66EF, 0x9FFD, 0x133F, 0x1FF9, 0x009D, 0x000A, 0xABBF, 0x8FF9,
-        0xDFFF, 0x6FFD, 0x006E, 0x4FF9, 0x002C, 0x5FFB, 0x888F, 0x2FF9, 0xCDDF, 0x4DDD, 0x222F, 0x1FF9, 0x1DDD,
-        0xAFFB, 0x4CCF, 0x8FF9, 0x001C, 0xFFFB, 0x277F, 0x4FF9, 0x177D, 0x3FFB, 0x99BF, 0x2FF9, 0xCEEF, 0x8EED,
-        0x004E, 0x1FF9, 0x22AD, 0x000A, 0x00AE, 0x8FF9, 0x7FFF, 0xCFFD, 0x005E, 0x4FF9, 0x115D, 0x5FFB, 0x009E,
-        0x2FF9, 0x5DDF, 0x2EED, 0x003E, 0x1FF9, 0x2BBD, 0xAFFB, 0x00CE, 0x8FF9, 0xEFFF, 0xFFFB, 0x667F, 0x4FF9,
-        0x006D, 0x3FFB, 0x8AAF, 0x2FF9, 0x00EE, 0x9FFD, 0x233F, 0x1FF9, 0x009D, 0x000A, 0x1BBF, 0x8FF9, 0x4EEF,
-        0x6FFD, 0x455F, 0x4FF9, 0x002C, 0x5FFB, 0x008E, 0x2FF9, 0x99DF, 0x4DDD, 0x111F};
+        0xB8FD, 0x0048, 0x444D, 0x0004, 0x009C, 0x0018, 0x00BE, 0x0004, 0xE4FD, 0x0088, 0x445D, 0x0004, 0x00AC,
+        0x0028, 0x00EE, 0x0004, 0x54DD, 0x0048, 0x222D, 0x0004, 0x003D, 0x0018, 0x007E, 0x0004, 0x00CA, 0x0088,
+        0x207D, 0x0004, 0xC4CD, 0x0028, 0xF1FF, 0x0004, 0xA2FD, 0x0048, 0x005C, 0x0004, 0x009D, 0x0018, 0x11BF,
+        0x0004, 0x10BD, 0x0088, 0x006C, 0x0004, 0x88AD, 0x0028, 0x22EF, 0x0004, 0xA8ED, 0x0048, 0x003C, 0x0004,
+        0x888D, 0x0018, 0x227F, 0x0004, 0x00CA, 0x0088, 0x006D, 0x0004, 0x88CD, 0x0028, 0xE4EF, 0x0004, 0xB8FD,
+        0x0048, 0x444D, 0x0004, 0x009C, 0x0018, 0xA2AF, 0x0004, 0xE4FD, 0x0088, 0x445D, 0x0004, 0x00AC, 0x0028,
+        0xD8DF, 0x0004, 0x54DD, 0x0048, 0x222D, 0x0004, 0x003D, 0x0018, 0x515F, 0x0004, 0x005A, 0x0088, 0x006C,
+        0x0004, 0x88DD, 0x0028, 0x32FF, 0x0004, 0x11FD, 0x0048, 0x444D, 0x0004, 0x00AD, 0x0018, 0x00BE, 0x0004,
+        0x317D, 0x0088, 0x515D, 0x0004, 0x00CC, 0x0028, 0x00DE, 0x0004, 0x20ED, 0x0048, 0x111D, 0x0004, 0x009D,
+        0x0018, 0x007E, 0x0004, 0x005A, 0x0088, 0x545D, 0x0004, 0x44CD, 0x0028, 0x00EE, 0x0004, 0xF1FD, 0x0048,
+        0x003C, 0x0004, 0x00AC, 0x0018, 0x555F, 0x0004, 0x74FD, 0x0088, 0x113D, 0x0004, 0x20BD, 0x0028, 0x747F,
+        0x0004, 0xC4DD, 0x0048, 0xF8FF, 0x0004, 0x009C, 0x0018, 0x222F, 0x0004, 0x005A, 0x0088, 0x006C, 0x0004,
+        0x88DD, 0x0028, 0x00FE, 0x0004, 0x11FD, 0x0048, 0x444D, 0x0004, 0x00AD, 0x0018, 0x888F, 0x0004, 0x317D,
+        0x0088, 0x515D, 0x0004, 0x00CC, 0x0028, 0xC8CF, 0x0004, 0x20ED, 0x0048, 0x111D, 0x0004, 0x009D, 0x0018,
+        0x006F, 0x0004, 0x005A, 0x0088, 0x545D, 0x0004, 0x44CD, 0x0028, 0xD1DF, 0x0004, 0xF1FD, 0x0048, 0x003C,
+        0x0004, 0x00AC, 0x0018, 0x227F, 0x0004, 0x74FD, 0x0088, 0x113D, 0x0004, 0x20BD, 0x0028, 0x22BF, 0x0004,
+        0xC4DD, 0x0048, 0x22EF, 0x0004, 0x009C, 0x0018, 0x323F, 0x0006, 0xD4DD, 0xF4FB, 0xFCFF, 0x0018, 0x113D,
+        0x005A, 0x888F, 0x0006, 0x32BD, 0x008A, 0x00EE, 0x002A, 0x515D, 0xAAFD, 0x727F, 0x0006, 0x44CD, 0xF8FB,
+        0x44EF, 0x0018, 0x647D, 0x004A, 0xA2AF, 0x0006, 0x00AC, 0x555B, 0x99DF, 0xF1FB, 0x003C, 0xF5FD, 0x626F,
+        0x0006, 0xD1DD, 0xF4FB, 0xE6FF, 0x0018, 0x717D, 0x005A, 0xB1BF, 0x0006, 0x88AD, 0x008A, 0xD5DF, 0x002A,
+        0x444D, 0xF2FD, 0x667F, 0x0006, 0x00CC, 0xF8FB, 0xE2EF, 0x0018, 0x545D, 0x004A, 0x119F, 0x0006, 0x009C,
+        0x555B, 0xC8CF, 0xF1FB, 0x111D, 0xC8ED, 0x006E, 0x0006, 0xD4DD, 0xF4FB, 0xF3FF, 0x0018, 0x113D, 0x005A,
+        0x11BF, 0x0006, 0x32BD, 0x008A, 0xD8DF, 0x002A, 0x515D, 0xAAFD, 0x222F, 0x0006, 0x44CD, 0xF8FB, 0x00FE,
+        0x0018, 0x647D, 0x004A, 0x989F, 0x0006, 0x00AC, 0x555B, 0x00DE, 0xF1FB, 0x003C, 0xF5FD, 0x446F, 0x0006,
+        0xD1DD, 0xF4FB, 0xB9FF, 0x0018, 0x717D, 0x005A, 0x00BE, 0x0006, 0x88AD, 0x008A, 0xDCDF, 0x002A, 0x444D,
+        0xF2FD, 0x007E, 0x0006, 0x00CC, 0xF8FB, 0xE4EF, 0x0018, 0x545D, 0x004A, 0x737F, 0x0006, 0x009C, 0x555B,
+        0xB8BF, 0xF1FB, 0x111D, 0xC8ED, 0x323F, 0x0004, 0x00AA, 0x0088, 0x407D, 0x0004, 0x10DD, 0x0028, 0x11DF,
+        0x0004, 0x72FD, 0x0048, 0x005C, 0x0004, 0xA8AD, 0x0018, 0xB2BF, 0x0004, 0x009C, 0x0088, 0x006C, 0x0004,
+        0x00CC, 0x0028, 0x00EE, 0x0004, 0xC8ED, 0x0048, 0x222D, 0x0004, 0x888D, 0x0018, 0x007E, 0x0004, 0x00AA,
+        0x0088, 0x006D, 0x0004, 0x88CD, 0x0028, 0x00FE, 0x0004, 0x91FD, 0x0048, 0x003C, 0x0004, 0xA2AD, 0x0018,
+        0xAAAF, 0x0004, 0xB8FD, 0x0088, 0x005D, 0x0004, 0x00BD, 0x0028, 0xC4CF, 0x0004, 0x44ED, 0x0048, 0xF4FF,
+        0x0004, 0x223D, 0x0018, 0x111F, 0x0004, 0x00AA, 0x0088, 0x407D, 0x0004, 0x10DD, 0x0028, 0x99FF, 0x0004,
+        0x72FD, 0x0048, 0x005C, 0x0004, 0xA8AD, 0x0018, 0x00BE, 0x0004, 0x009C, 0x0088, 0x006C, 0x0004, 0x00CC,
+        0x0028, 0x00DE, 0x0004, 0xC8ED, 0x0048, 0x222D, 0x0004, 0x888D, 0x0018, 0x444F, 0x0004, 0x00AA, 0x0088,
+        0x006D, 0x0004, 0x88CD, 0x0028, 0xE2EF, 0x0004, 0x91FD, 0x0048, 0x003C, 0x0004, 0xA2AD, 0x0018, 0x447F,
+        0x0004, 0xB8FD, 0x0088, 0x005D, 0x0004, 0x00BD, 0x0028, 0x009F, 0x0004, 0x44ED, 0x0048, 0x76FF, 0x0004,
+        0x223D, 0x0018, 0x313F, 0x0006, 0x00CC, 0x008A, 0xD9FF, 0xF2FB, 0x647D, 0xF1FD, 0x99BF, 0x0006, 0xA2AD,
+        0x002A, 0x66EF, 0xF4FB, 0x005C, 0xE2ED, 0x737F, 0x0006, 0x98BD, 0x004A, 0x00FE, 0xF8FB, 0x006C, 0x76FD,
+        0x889F, 0x0006, 0x888D, 0x001A, 0xD5DF, 0x00AA, 0x222D, 0x98DD, 0x444F, 0x0006, 0xB2BD, 0x008A, 0xFCFF,
+        0xF2FB, 0x226D, 0x009C, 0x00BE, 0x0006, 0xAAAD, 0x002A, 0xD1DF, 0xF4FB, 0x003C, 0xD4DD, 0x646F, 0x0006,
+        0xA8AD, 0x004A, 0xEAEF, 0xF8FB, 0x445D, 0xE8ED, 0x717F, 0x0006, 0x323D, 0x001A, 0xC4CF, 0x00AA, 0xFAFF,
+        0x88CD, 0x313F, 0x0006, 0x00CC, 0x008A, 0x77FF, 0xF2FB, 0x647D, 0xF1FD, 0xB3BF, 0x0006, 0xA2AD, 0x002A,
+        0x00EE, 0xF4FB, 0x005C, 0xE2ED, 0x007E, 0x0006, 0x98BD, 0x004A, 0xE4EF, 0xF8FB, 0x006C, 0x76FD, 0x667F,
+        0x0006, 0x888D, 0x001A, 0x00DE, 0x00AA, 0x222D, 0x98DD, 0x333F, 0x0006, 0xB2BD, 0x008A, 0x75FF, 0xF2FB,
+        0x226D, 0x009C, 0x919F, 0x0006, 0xAAAD, 0x002A, 0x99DF, 0xF4FB, 0x003C, 0xD4DD, 0x515F, 0x0006, 0xA8AD,
+        0x004A, 0xECEF, 0xF8FB, 0x445D, 0xE8ED, 0x727F, 0x0006, 0x323D, 0x001A, 0xB1BF, 0x00AA, 0xF3FF, 0x88CD,
+        0x111F, 0x0006, 0x54DD, 0xF2FB, 0x111D, 0x0018, 0x647D, 0xF8FD, 0xCCCF, 0x0006, 0x91BD, 0x004A, 0x22EF,
+        0x002A, 0x222D, 0xF3FD, 0x888F, 0x0006, 0x00CC, 0x008A, 0x00FE, 0x0018, 0x115D, 0xFCFD, 0xA8AF, 0x0006,
+        0x00AC, 0x003A, 0xC8DF, 0xF1FB, 0x313D, 0x66FD, 0x646F, 0x0006, 0xC8CD, 0xF2FB, 0xF5FF, 0x0018, 0x006C,
+        0xF4FD, 0xBABF, 0x0006, 0x22AD, 0x004A, 0x00EE, 0x002A, 0x323D, 0xEAFD, 0x737F, 0x0006, 0xB2BD, 0x008A,
+        0x55DF, 0x0018, 0x005C, 0x717D, 0x119F, 0x0006, 0x009C, 0x003A, 0xC4CF, 0xF1FB, 0x333D, 0xE8ED, 0x444F,
+        0x0006, 0x54DD, 0xF2FB, 0x111D, 0x0018, 0x647D, 0xF8FD, 0x99BF, 0x0006, 0x91BD, 0x004A, 0xE2EF, 0x002A,
+        0x222D, 0xF3FD, 0x667F, 0x0006, 0x00CC, 0x008A, 0xE4EF, 0x0018, 0x115D, 0xFCFD, 0x989F, 0x0006, 0x00AC,
+        0x003A, 0x00DE, 0xF1FB, 0x313D, 0x66FD, 0x226F, 0x0006, 0xC8CD, 0xF2FB, 0xB9FF, 0x0018, 0x006C, 0xF4FD,
+        0x00BE, 0x0006, 0x22AD, 0x004A, 0xD1DF, 0x002A, 0x323D, 0xEAFD, 0x007E, 0x0006, 0xB2BD, 0x008A, 0xECEF,
+        0x0018, 0x005C, 0x717D, 0x727F, 0x0006, 0x009C, 0x003A, 0xB8BF, 0xF1FB, 0x333D, 0xE8ED, 0x545F, 0xF1F9,
+        0xD1DD, 0xFAFB, 0x00DE, 0xF8F9, 0x001C, 0xFFFB, 0x747F, 0xF4F9, 0x717D, 0xF3FB, 0xB3BF, 0xF2F9, 0xEAEF,
+        0xE8ED, 0x444F, 0xF1F9, 0x22AD, 0x000A, 0xB8BF, 0xF8F9, 0x00FE, 0xFCFD, 0x007E, 0xF4F9, 0x115D, 0xF5FB,
+        0x757F, 0xF2F9, 0xD8DF, 0xE2ED, 0x333F, 0xF1F9, 0xB2BD, 0xFAFB, 0x88CF, 0xF8F9, 0xFBFF, 0xFFFB, 0x737F,
+        0xF4F9, 0x006D, 0xF3FB, 0x00BE, 0xF2F9, 0x66EF, 0xF9FD, 0x313F, 0xF1F9, 0x009D, 0x000A, 0xBABF, 0xF8F9,
+        0xFDFF, 0xF6FD, 0x006E, 0xF4F9, 0x002C, 0xF5FB, 0x888F, 0xF2F9, 0xDCDF, 0xD4DD, 0x222F, 0xF1F9, 0xD1DD,
+        0xFAFB, 0xC4CF, 0xF8F9, 0x001C, 0xFFFB, 0x727F, 0xF4F9, 0x717D, 0xF3FB, 0x99BF, 0xF2F9, 0xECEF, 0xE8ED,
+        0x004E, 0xF1F9, 0x22AD, 0x000A, 0x00AE, 0xF8F9, 0xF7FF, 0xFCFD, 0x005E, 0xF4F9, 0x115D, 0xF5FB, 0x009E,
+        0xF2F9, 0xD5DF, 0xE2ED, 0x003E, 0xF1F9, 0xB2BD, 0xFAFB, 0x00CE, 0xF8F9, 0xFEFF, 0xFFFB, 0x667F, 0xF4F9,
+        0x006D, 0xF3FB, 0xA8AF, 0xF2F9, 0x00EE, 0xF9FD, 0x323F, 0xF1F9, 0x009D, 0x000A, 0xB1BF, 0xF8F9, 0xE4EF,
+        0xF6FD, 0x545F, 0xF4F9, 0x002C, 0xF5FB, 0x008E, 0xF2F9, 0x99DF, 0xD4DD, 0x111F};
+
+// LUT for UVLC decoding in initial line-pair
+//   index (8bits) : [bit   7] u_off_1 (1bit)
+//                   [bit   6] u_off_0 (1bit)
+//                   [bit 5-0] LSB bits from VLC codeword
+//   the index is incremented by 64 when both u_off_0 and u_off_1 are 0
+//
+//   output        : [bit 0-2] length of prefix (l_p) for quads 0 and 1
+//                 : [bit 3-6] length of suffix (l_s) for quads 0 and 1
+//                 : [bit 7-9] ength of suffix (l_s) for quads 0
+static const alignas(32) uint16_t uvlc_dec_0[256 + 64] = {
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x16ab,
+        0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401,
+        0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802,
+        0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401,
+        0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b,
+        0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0xa02b, 0x2001,
+        0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002,
+        0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001,
+        0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b,
+        0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001,
+        0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0x36ac, 0xa42c, 0xa82d,
+        0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402, 0x56ac, 0x640c, 0x4804, 0x2402, 0x4c8c, 0x4403, 0x2803, 0x2402,
+        0x36ac, 0xa42c, 0x680d, 0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402, 0x56ac, 0x640c, 0x4804, 0x2402, 0x4c8c,
+        0x4403, 0x2803, 0x2402, 0x36ac, 0xa42c, 0xa82d, 0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402, 0x56ac, 0x640c,
+        0x4804, 0x2402, 0x4c8c, 0x4403, 0x2803, 0x2402, 0x36ac, 0xa42c, 0x680d, 0x2402, 0x2c8c, 0x4403, 0x2803,
+        0x2402, 0x56ac, 0x640c, 0x4804, 0x2402, 0x4c8c, 0x4403, 0x2803, 0x2402, 0xfed6, 0xec2c, 0xf02d, 0x6c02,
+        0xf4b6, 0x8c03, 0x7003, 0x6c02, 0x7eac, 0xac0c, 0x9004, 0x6c02, 0x748c, 0x8c03, 0x7003, 0x6c02, 0x9ead,
+        0xec2c, 0xb00d, 0x6c02, 0x948d, 0x8c03, 0x7003, 0x6c02, 0x7eac, 0xac0c, 0x9004, 0x6c02, 0x748c, 0x8c03,
+        0x7003, 0x6c02, 0xbeb6, 0xec2c, 0xf02d, 0x6c02, 0xb496, 0x8c03, 0x7003, 0x6c02, 0x7eac, 0xac0c, 0x9004,
+        0x6c02, 0x748c, 0x8c03, 0x7003, 0x6c02, 0x9ead, 0xec2c, 0xb00d, 0x6c02, 0x948d, 0x8c03, 0x7003, 0x6c02,
+        0x7eac, 0xac0c, 0x9004, 0x6c02, 0x748c, 0x8c03, 0x7003, 0x6c02};
+
+// LUT for UVLC decoding in non-initial line-pair
+//   index (8bits) : [bit   7] u_off_1 (1bit)
+//                   [bit   6] u_off_0 (1bit)
+//                   [bit 5-0] LSB bits from VLC codeword
+//
+//   output        : [bit 0-2] length of prefix (l_p) for quads 0 and 1
+//                 : [bit 3-6] length of suffix (l_s) for quads 0 and 1
+//                 : [bit 7-9] ength of suffix (l_s) for quads 0
+static const alignas(32) uint16_t uvlc_dec_1[256] = {
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x16ab,
+        0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401,
+        0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802,
+        0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401,
+        0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b,
+        0x0401, 0x0802, 0x0401, 0x16ab, 0x0401, 0x0802, 0x0401, 0x0c8b, 0x0401, 0x0802, 0x0401, 0xa02b, 0x2001,
+        0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002,
+        0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001,
+        0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b,
+        0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001,
+        0x4002, 0x2001, 0xa02b, 0x2001, 0x4002, 0x2001, 0x600b, 0x2001, 0x4002, 0x2001, 0xb6d6, 0xa42c, 0xa82d,
+        0x2402, 0xacb6, 0x4403, 0x2803, 0x2402, 0x36ac, 0x640c, 0x4804, 0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402,
+        0x56ad, 0xa42c, 0x680d, 0x2402, 0x4c8d, 0x4403, 0x2803, 0x2402, 0x36ac, 0x640c, 0x4804, 0x2402, 0x2c8c,
+        0x4403, 0x2803, 0x2402, 0x76b6, 0xa42c, 0xa82d, 0x2402, 0x6c96, 0x4403, 0x2803, 0x2402, 0x36ac, 0x640c,
+        0x4804, 0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402, 0x56ad, 0xa42c, 0x680d, 0x2402, 0x4c8d, 0x4403, 0x2803,
+        0x2402, 0x36ac, 0x640c, 0x4804, 0x2402, 0x2c8c, 0x4403, 0x2803, 0x2402};
