@@ -72,3 +72,4 @@ NEON-OBJS-$(CONFIG_HEVC_DECODER)        += aarch64/hevcdsp_deblock_neon.o      \
                                            aarch64/hevcdsp_qpel_neon.o         \
                                            aarch64/hevcdsp_epel_neon.o         \
                                            aarch64/hevcdsp_sao_neon.o
+NEON-OBJS-$(CONFIG_JPEG2000_DECODER)    += aarch64/jpeg2000dwt_neon.o
