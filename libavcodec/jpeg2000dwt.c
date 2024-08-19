@@ -34,6 +34,8 @@
 
 #if HAVE_AVX2
 #include "libavcodec/x86/jpeg2000dwt_avx2.h"
+#elif HAVE_NEON
+#include "libavcodec/aarch64/jpeg2000dwt_neon.h"
 #endif
 
 /* Defines for 9/7 DWT lifting parameters.
@@ -814,6 +816,10 @@ static void dwt_decode53(DWTContext *s, int *t)
     idwt_2d_interleave = idwt_2d_interleave_int_avx2;
     filtr = idwt_1d_filtr_53_avx2;
     ver_sr = idwt_ver_sr_53_avx2;
+#elif HAVE_NEON
+    idwt_2d_interleave = idwt_2d_interleave_int_neon;
+    filtr = idwt_1d_filtr_53;
+    ver_sr = idwt_ver_sr_53;
 #else
     idwt_2d_interleave = idwt_2d_interleave_int;
     filtr = idwt_1d_filtr_53;
@@ -854,6 +860,10 @@ static void dwt_decode97_float(DWTContext *s, float *t)
     idwt_2d_interleave = idwt_2d_interleave_float_avx2;
     filtr = idwt_1d_filtr_97_avx2;
     ver_sr = idwt_ver_sr_97_avx2;
+#elif HAVE_NEON
+    idwt_2d_interleave = idwt_2d_interleave_float_neon;
+    filtr = idwt_1d_filtr_97_neon;
+    ver_sr = idwt_ver_sr_97_neon;
 #else
     idwt_2d_interleave = idwt_2d_interleave_float;
     filtr = idwt_1d_filtr_97;
@@ -896,6 +906,10 @@ static void dwt_decode97_int(DWTContext *s, int32_t *t)
     idwt_2d_interleave = idwt_2d_interleave_int_avx2;
     filtr = idwt_1d_filtr_97_int_avx2;
     ver_sr = idwt_ver_sr_97_int_avx2;
+#elif HAVE_NEON
+    idwt_2d_interleave = idwt_2d_interleave_int_neon;
+    filtr = idwt_1d_filtr_97_int;
+    ver_sr = idwt_ver_sr_97_int;
 #else
     idwt_2d_interleave = idwt_2d_interleave_int;
     filtr = idwt_1d_filtr_97_int;
