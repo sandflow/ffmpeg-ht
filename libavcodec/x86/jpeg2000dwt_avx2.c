@@ -331,7 +331,7 @@ static inline void idwt_97_int_step0(const int32_t init_pos, const int32_t simdl
     __m256i xsum = _mm256_add_epi32(xin0, xin2);
     __m256i xtmp0 = _mm256_mul_epi32(vcoeff, xsum);
     _mm256_storeu_si256((__m256i *)tmp, xtmp0);
-    xtmp0 = _mm256_srai_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
+    xtmp0 = _mm256_srli_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
     _mm256_storeu_si256((__m256i *)tmp, xtmp0);
     xtmp0 = _mm256_blend_epi32(xtmp0, _mm256_setzero_si256(), 0xAA);
     _mm256_storeu_si256((__m256i *)tmp, xtmp0);
@@ -351,7 +351,7 @@ static inline void idwt_97_int_step1(const int32_t init_pos, const int32_t simdl
     __m256i xin2 = _mm256_loadu_si256((__m256i *)(X + n + n1));
     __m256i xsum = _mm256_add_epi32(xin0, xin2);
     __m256i xtmp0 = _mm256_mul_epi32(vcoeff, xsum);
-    xtmp0 = _mm256_srai_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
+    xtmp0 = _mm256_srli_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
     xtmp0 = _mm256_blend_epi32(xtmp0, _mm256_setzero_si256(), 0xAA);
     xtmp0 = _mm256_slli_si256(xtmp0, 4);
     _mm256_storeu_si256((__m256i *)(X + n + n0), _mm256_sub_epi32(xin0, xtmp0));
@@ -368,7 +368,7 @@ static inline void idwt_97_int_step2(const int32_t init_pos, const int32_t simdl
     __m256i xin2 = _mm256_loadu_si256((__m256i *)(X + n + n1));
     __m256i xsum = _mm256_add_epi32(xin0, xin2);
     __m256i xtmp0 = _mm256_mul_epi32(vcoeff, xsum);
-    xtmp0 = _mm256_srai_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
+    xtmp0 = _mm256_srli_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
     xtmp0 = _mm256_blend_epi32(xtmp0, _mm256_setzero_si256(), 0xAA);
     xtmp0 = _mm256_slli_si256(xtmp0, 4);
     _mm256_storeu_si256((__m256i *)(X + n + n0), _mm256_sub_epi32(xin0, xtmp0));
@@ -386,7 +386,7 @@ static inline void idwt_97_int_step3(const int32_t init_pos, const int32_t simdl
     __m256i xsum = _mm256_add_epi32(xin0, xin2);
     // xin0 = _mm256_add_epi32(xin0, xsum);
     __m256i xtmp0 = _mm256_mul_epi32(vcoeff, xsum);
-    xtmp0 = _mm256_srai_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
+    xtmp0 = _mm256_srli_epi64(_mm256_add_epi64(xtmp0, voffset), vshift);
     xtmp0 = _mm256_blend_epi32(xtmp0, _mm256_setzero_si256(), 0xAA);
     xtmp0 = _mm256_slli_si256(xtmp0, 4);
     _mm256_storeu_si256((__m256i *)(X + n + n0), _mm256_sub_epi32(xin0, xtmp0));
