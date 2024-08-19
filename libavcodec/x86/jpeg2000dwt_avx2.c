@@ -692,8 +692,8 @@ void idwt_ver_sr_97_int_avx2(void *src, const int32_t u0, const int32_t u1, cons
                 xsum = _mm256_add_epi32(x0, x2);
                 x0 = _mm256_mul_epi32(vcoeff, xsum);
                 x2 = _mm256_mul_epi32(vcoeff, _mm256_srli_si256(xsum, 4));
-                x0 = _mm256_srai_epi64(_mm256_add_epi64(x0, voffset), vshift);
-                x2 = _mm256_srai_epi64(_mm256_add_epi64(x2, voffset), vshift);
+                x0 = _mm256_srli_epi64(_mm256_add_epi64(x0, voffset), vshift);
+                x2 = _mm256_srli_epi64(_mm256_add_epi64(x2, voffset), vshift);
                 x2 = _mm256_slli_si256(x2, 4);
                 x0 = _mm256_blend_epi32(x0, x2, 0xAA);
                 _mm256_store_si256((__m256i *)(buf[n] + col), _mm256_sub_epi32(x1, x0));
@@ -710,8 +710,8 @@ void idwt_ver_sr_97_int_avx2(void *src, const int32_t u0, const int32_t u1, cons
                 xsum = _mm256_add_epi32(x0, x2);
                 x0 = _mm256_mul_epi32(vcoeff, xsum);
                 x2 = _mm256_mul_epi32(vcoeff, _mm256_srli_si256(xsum, 4));
-                x0 = _mm256_srai_epi64(_mm256_add_epi64(x0, voffset), vshift);
-                x2 = _mm256_srai_epi64(_mm256_add_epi64(x2, voffset), vshift);
+                x0 = _mm256_srli_epi64(_mm256_add_epi64(x0, voffset), vshift);
+                x2 = _mm256_srli_epi64(_mm256_add_epi64(x2, voffset), vshift);
                 x2 = _mm256_slli_si256(x2, 4);
                 x0 = _mm256_blend_epi32(x0, x2, 0xAA);
                 _mm256_store_si256((__m256i *)(buf[n + 1] + col), _mm256_sub_epi32(x1, x0));
@@ -728,8 +728,8 @@ void idwt_ver_sr_97_int_avx2(void *src, const int32_t u0, const int32_t u1, cons
                 xsum = _mm256_add_epi32(x0, x2);
                 x0 = _mm256_mul_epi32(vcoeff, xsum);
                 x2 = _mm256_mul_epi32(vcoeff, _mm256_srli_si256(xsum, 4));
-                x0 = _mm256_srai_epi64(_mm256_add_epi64(x0, voffset), vshift);
-                x2 = _mm256_srai_epi64(_mm256_add_epi64(x2, voffset), vshift);
+                x0 = _mm256_srli_epi64(_mm256_add_epi64(x0, voffset), vshift);
+                x2 = _mm256_srli_epi64(_mm256_add_epi64(x2, voffset), vshift);
                 x2 = _mm256_slli_si256(x2, 4);
                 x0 = _mm256_blend_epi32(x0, x2, 0xAA);
                 int32_t tmp[8];
@@ -749,8 +749,8 @@ void idwt_ver_sr_97_int_avx2(void *src, const int32_t u0, const int32_t u1, cons
                 x1 = _mm256_add_epi32(x1, xsum);
                 x0 = _mm256_mul_epi32(vcoeff, xsum);
                 x2 = _mm256_mul_epi32(vcoeff, _mm256_srli_si256(xsum, 4));
-                x0 = _mm256_srai_epi64(_mm256_add_epi64(x0, voffset), vshift);
-                x2 = _mm256_srai_epi64(_mm256_add_epi64(x2, voffset), vshift);
+                x0 = _mm256_srli_epi64(_mm256_add_epi64(x0, voffset), vshift);
+                x2 = _mm256_srli_epi64(_mm256_add_epi64(x2, voffset), vshift);
                 x2 = _mm256_slli_si256(x2, 4);
                 x0 = _mm256_blend_epi32(x0, x2, 0xAA);
                 _mm256_store_si256((__m256i *)(buf[n + 1] + col), _mm256_sub_epi32(x1, x0));
