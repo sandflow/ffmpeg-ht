@@ -5,27 +5,6 @@
 
 #include <arm_neon.h>
 
-/* Defines for 9/7 DWT lifting parameters.
- * Parameters are in float. */
-#define F_LFTG_ALPHA  1.586134342059924f
-#define F_LFTG_BETA   0.052980118572961f
-#define F_LFTG_GAMMA  0.882911075530934f
-#define F_LFTG_DELTA  0.443506852043971f
-
-/* Lifting parameters in integer format.
- * Computed as param = (float param) * (1 << 16) */
-#define I_LFTG_ALPHA  38413ll // 103949ll
-#define I_LFTG_BETA    3472ll //13888ll
-#define I_LFTG_GAMMA   57862ll
-#define I_LFTG_DELTA   29066ll
-#define I_LFTG_K       80621ll
-#define I_LFTG_X       53274ll
-
-#define I_LFTG_ALPHA_SHIFT 16
-#define I_LFTG_BETA_SHIFT 16
-#define I_LFTG_GAMMA_SHIFT 16
-#define I_LFTG_DELTA_SHIFT 16
-
 void idwt_2d_interleave_int_neon(void *in, void *LL, void *HL, void *LH, void *HH,
                                  int32_t u0, int32_t u1, int32_t v0, int32_t v1, int32_t w) {
     int32_t *buf = (int32_t *)in;
@@ -341,47 +320,67 @@ void idwt_ver_sr_97_neon(void *src, const int32_t u0, const int32_t u1, const in
         float32x4_t vcoeff;
         float32x4x2_t x0, x1, x2;
         for (int32_t n = -2 + offset, i = start - 1; i < stop + 2; i++, n += 2) {
+            float *sp0, *sp1, *sp2;
+            sp0 = buf[n - 1], sp1 = buf[n], sp2 = buf[n + 1];
             vcoeff = vdupq_n_f32(F_LFTG_DELTA);
-            for (int32_t col = 0; col < stride; col += 8) {
-                x0 = vld2q_f32(buf[n - 1] + col);
-                x1 = vld2q_f32(buf[n] + col);
-                x2 = vld2q_f32(buf[n + 1] + col);
+            for (int32_t col = stride; col > 0; col -= 8) {
+                x0 = vld2q_f32(sp0);
+                x1 = vld2q_f32(sp1);
+                x2 = vld2q_f32(sp2);
                 x1.val[0] = vfmsq_f32(x1.val[0], vcoeff, vaddq_f32(x0.val[0], x2.val[0]));
                 x1.val[1] = vfmsq_f32(x1.val[1], vcoeff, vaddq_f32(x0.val[1], x2.val[1]));
-                vst2q_f32(buf[n] + col, x1);
+                vst2q_f32(sp1, x1);
+                sp0 += 8;
+                sp1 += 8;
+                sp2 += 8;
             }
         }
         for (int32_t n = -2 + offset, i = start - 1; i < stop + 1; i++, n += 2) {
+            float *sp0, *sp1, *sp2;
+            sp0 = buf[n], sp1 = buf[n + 1], sp2 = buf[n + 2];
             vcoeff = vdupq_n_f32(F_LFTG_GAMMA);
-            for (int32_t col = 0; col < stride; col += 8) {
-                x0 = vld2q_f32(buf[n] + col);
-                x1 = vld2q_f32(buf[n + 1] + col);
-                x2 = vld2q_f32(buf[n + 2] + col);
+            for (int32_t col = stride; col > 0; col -= 8) {
+                x0 = vld2q_f32(sp0);
+                x1 = vld2q_f32(sp1);
+                x2 = vld2q_f32(sp2);
                 x1.val[0] = vfmsq_f32(x1.val[0], vcoeff, vaddq_f32(x0.val[0], x2.val[0]));
                 x1.val[1] = vfmsq_f32(x1.val[1], vcoeff, vaddq_f32(x0.val[1], x2.val[1]));
-                vst2q_f32(buf[n + 1] + col, x1);
+                vst2q_f32(sp1, x1);
+                sp0 += 8;
+                sp1 += 8;
+                sp2 += 8;
             }
         }
         for (int32_t n = 0 + offset, i = start; i < stop + 1; i++, n += 2) {
+            float *sp0, *sp1, *sp2;
+            sp0 = buf[n - 1], sp1 = buf[n], sp2 = buf[n + 1];
             vcoeff = vdupq_n_f32(-F_LFTG_BETA);
-            for (int32_t col = 0; col < stride; col += 8) {
-                x0 = vld2q_f32(buf[n - 1] + col);
-                x1 = vld2q_f32(buf[n] + col);
-                x2 = vld2q_f32(buf[n + 1] + col);
+            for (int32_t col = stride; col > 0; col -= 8) {
+                x0 = vld2q_f32(sp0);
+                x1 = vld2q_f32(sp1);
+                x2 = vld2q_f32(sp2);
                 x1.val[0] = vfmsq_f32(x1.val[0], vcoeff, vaddq_f32(x0.val[0], x2.val[0]));
                 x1.val[1] = vfmsq_f32(x1.val[1], vcoeff, vaddq_f32(x0.val[1], x2.val[1]));
-                vst2q_f32(buf[n] + col, x1);
+                vst2q_f32(sp1, x1);
+                sp0 += 8;
+                sp1 += 8;
+                sp2 += 8;
             }
         }
         for (int32_t n = 0 + offset, i = start; i < stop; i++, n += 2) {
+            float *sp0, *sp1, *sp2;
+            sp0 = buf[n], sp1 = buf[n + 1], sp2 = buf[n + 2];
             vcoeff = vdupq_n_f32(-F_LFTG_ALPHA);
-            for (int32_t col = 0; col < stride; col += 8) {
-                x0 = vld2q_f32(buf[n] + col);
-                x1 = vld2q_f32(buf[n + 1] + col);
-                x2 = vld2q_f32(buf[n + 2] + col);
+            for (int32_t col = stride; col > 0; col -= 8) {
+                x0 = vld2q_f32(sp0);
+                x1 = vld2q_f32(sp1);
+                x2 = vld2q_f32(sp2);
                 x1.val[0] = vfmsq_f32(x1.val[0], vcoeff, vaddq_f32(x0.val[0], x2.val[0]));
                 x1.val[1] = vfmsq_f32(x1.val[1], vcoeff, vaddq_f32(x0.val[1], x2.val[1]));
-                vst2q_f32(buf[n + 1] + col, x1);
+                vst2q_f32(sp1, x1);
+                sp0 += 8;
+                sp1 += 8;
+                sp2 += 8;
             }
         }
         for (int32_t i = 1; i <= top; ++i) {

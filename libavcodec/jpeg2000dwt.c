@@ -38,28 +38,6 @@
 #include "libavcodec/aarch64/jpeg2000dwt_neon.h"
 #endif
 
-/* Defines for 9/7 DWT lifting parameters.
- * Parameters are in float. */
-#define F_LFTG_ALPHA  1.586134342059924f
-#define F_LFTG_BETA   0.052980118572961f
-#define F_LFTG_GAMMA  0.882911075530934f
-#define F_LFTG_DELTA  0.443506852043971f
-
-/* Lifting parameters in integer format.
- * Computed as param = (float param) * (1 << 16) */
-#define I_LFTG_ALPHA  38413ll // 103949ll
-#define I_LFTG_BETA    3472ll //13888ll
-#define I_LFTG_GAMMA   57862ll
-#define I_LFTG_DELTA   29066ll
-#define I_LFTG_K       80621ll
-#define I_LFTG_X       53274ll
-
-#define I_LFTG_ALPHA_SHIFT 16
-#define I_LFTG_BETA_SHIFT 16
-#define I_LFTG_GAMMA_SHIFT 16
-#define I_LFTG_DELTA_SHIFT 16
-#define I_PRESHIFT 8
-
 static void (*idwt_2d_interleave)(void *, void *, void *, void *, void *, int32_t, int32_t, int32_t, int32_t, int32_t);
 static void (*ver_sr)(void *, const int32_t, const int32_t, const int32_t, const int32_t, const int32_t);
 static void (*filtr)(void*, const int32_t, const int32_t, const int32_t);
