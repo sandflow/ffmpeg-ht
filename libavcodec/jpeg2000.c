@@ -269,7 +269,7 @@ static void init_band_stepsize(AVCodecContext *avctx,
         av_log(avctx, AV_LOG_ERROR, "stepsize out of range\n");
     }
 
-    band->i_stepsize = (int)lround(band->f_stepsize * (1 << 15) + 0.5f);
+    band->i_stepsize = lrint(band->f_stepsize * (1 << 15) + 0.5f);
 
     /* FIXME: In OpenJPEG code stepsize = stepsize * 0.5. Why?
      * If not set output of entropic decoder is not correct. */
