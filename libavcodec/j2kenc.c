@@ -1384,7 +1384,9 @@ static void truncpasses(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
                     Jpeg2000Band *band = reslevel->band + bandno;
                     Jpeg2000Prec *prec = band->prec + precno;
 
-                    int64_t dwt_norm = dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 15;
+                    // Shifting down to 1 bit above from the binary point.
+                    // This is mandatory for FF_DWT97_INT to maintain its precision.
+                    int64_t dwt_norm = dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 14;
                     int64_t lambda_prime = av_rescale(s->lambda, 1 << WMSEDEC_SHIFT, dwt_norm * dwt_norm);
                     for (cblkno = 0; cblkno < prec->nb_codeblocks_height * prec->nb_codeblocks_width; cblkno++){
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
@@ -1457,7 +1459,10 @@ static int encode_tile(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile, int tileno
                                 int *ptr = t1.data + (y-yy0)*t1.stride;
                                 for (x = xx0; x < xx1; x++){
                                     *ptr = (comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * y + x]);
-                                    *ptr = (int64_t)*ptr * (int64_t)(16384 * 65536 / band->i_stepsize) >> 15 - NMSEDEC_FRACBITS;
+
+                                    // Shifting down to 1 bit above from the binary point.
+                                    // This is mandatory for FF_DWT97_INT to maintain its precision.
+                                    *ptr = (int64_t)*ptr * (int64_t)(16384 * 65536 / band->i_stepsize) >> 14 - NMSEDEC_FRACBITS;
                                     ptr++;
                                 }
                             }
