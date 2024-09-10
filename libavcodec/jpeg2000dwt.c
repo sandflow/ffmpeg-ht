@@ -536,7 +536,6 @@ static void dwt_decode97_int(DWTContext *s, int32_t *t)
     }
 
     for (i = 0; i < w * h; i++)
-        // Shifting down to the binary point.
         // In FF_DWT97_INT, the binary point of the input coefficients is 1 bit above from the LSB.
         // So, we need `>> (I_PRESHIFT + 1)`  here.
         data[i] = (int32_t)(data[i] + ((1LL<<(I_PRESHIFT + 1))>>1)) >> (I_PRESHIFT + 1);
