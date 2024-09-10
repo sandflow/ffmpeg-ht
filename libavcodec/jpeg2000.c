@@ -260,7 +260,6 @@ static void init_band_stepsize(AVCodecContext *avctx,
                 band->f_stepsize *= F_LFTG_X * F_LFTG_X * 4;
                 break;
         }
-        // scaling
         band->f_stepsize *= pow(F_LFTG_K, 2*(codsty->nreslevels2decode - reslevelno) + lband - 2);
     }
 
