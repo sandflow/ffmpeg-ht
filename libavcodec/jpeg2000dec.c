@@ -2136,7 +2136,6 @@ static void dequantization_int_97(int x, int y, Jpeg2000Cblk *cblk,
         int32_t *datap = &comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
         for (i = 0; i < w; ++i)
-            // This is mandatory for FF_DWT97_INT to pass the conformance testing.
             datap[i] = (int32_t)(src[i] * (int64_t)band->i_stepsize + (1 << 14)) >> 15;
     }
 }
