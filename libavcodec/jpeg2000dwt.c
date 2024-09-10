@@ -40,11 +40,11 @@
 /* Lifting parameters in integer format.
  * Computed as param = (float param) * (1 << 16) */
 #define I_LFTG_ALPHA_PRIME   38413ll // = 103949 - 65536, (= alpha - 1.0)
-#define I_LFTG_BETA     3472ll
-#define I_LFTG_GAMMA   57862ll
-#define I_LFTG_DELTA   29066ll
-#define I_LFTG_K       80621ll
-#define I_LFTG_X       53274ll
+#define I_LFTG_BETA           3472ll
+#define I_LFTG_GAMMA         57862ll
+#define I_LFTG_DELTA         29066ll
+#define I_LFTG_K             80621ll
+#define I_LFTG_X             53274ll
 #define I_PRESHIFT 8
 
 static inline void extend53(int *p, int i0, int i1)
@@ -235,7 +235,7 @@ static void sd_1d97_int(int *p, int i0, int i1)
     i0++; i1++;
 
     for (i = (i0>>1) - 2; i < (i1>>1) + 1; i++) {
-        int64_t sum = p[2 * i] + p[2 * i + 2];
+        const int64_t sum = p[2 * i] + p[2 * i + 2];
         p[2 * i + 1] -= sum;
         p[2 * i + 1] -= (I_LFTG_ALPHA_PRIME * sum + (1 << 15)) >> 16;
     }
@@ -475,9 +475,9 @@ static void sr_1d97_int(int32_t *p, int i0, int i1)
         p[2 * i]     += (I_LFTG_BETA  * (p[2 * i - 1] + (int64_t)p[2 * i + 1]) + (1 << 15)) >> 16;
     /* step 6 */
     for (i = (i0 >> 1); i < (i1 >> 1); i++) {
-        int64_t sum = p[2 * i] + (int64_t) p[2 * i + 2];
+        const int64_t sum = p[2 * i] + (int64_t) p[2 * i + 2];
         p[2 * i + 1] += sum;
-        p[2 * i + 1] += (I_LFTG_ALPHA * sum + (1 << 15)) >> 16;
+        p[2 * i + 1] += (I_LFTG_ALPHA_PRIME * sum + (1 << 15)) >> 16;
     }
 }
 
