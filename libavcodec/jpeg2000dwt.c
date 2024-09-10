@@ -39,7 +39,7 @@
 
 /* Lifting parameters in integer format.
  * Computed as param = (float param) * (1 << 16) */
-#define I_LFTG_ALPHA   38413ll // = 103949 - 65536, (= 1.586 - 1.0)
+#define I_LFTG_ALPHA_PRIME   38413ll // = 103949 - 65536, (= alpha - 1.0)
 #define I_LFTG_BETA     3472ll
 #define I_LFTG_GAMMA   57862ll
 #define I_LFTG_DELTA   29066ll
