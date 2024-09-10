@@ -237,7 +237,7 @@ static void sd_1d97_int(int *p, int i0, int i1)
     for (i = (i0>>1) - 2; i < (i1>>1) + 1; i++) {
         int64_t sum = p[2 * i] + p[2 * i + 2];
         p[2 * i + 1] -= sum;
-        p[2 * i + 1] -= (I_LFTG_ALPHA * sum + (1 << 15)) >> 16;
+        p[2 * i + 1] -= (I_LFTG_ALPHA_PRIME * sum + (1 << 15)) >> 16;
     }
     for (i = (i0>>1) - 1; i < (i1>>1) + 1; i++)
         p[2 * i]     -= (I_LFTG_BETA  * (p[2 * i - 1] + p[2 * i + 1]) + (1 << 15)) >> 16;
