@@ -1989,6 +1989,19 @@ static void decode_clnpass(const Jpeg2000DecoderContext *s, Jpeg2000T1Context *t
     }
 }
 
+static inline int roi_shift_param(uint8_t roi_shift,
+                                   int quan_parameter)
+{
+    int val;
+    if (roi_shift) {
+        val = (quan_parameter < 0)?-quan_parameter:quan_parameter;
+
+        if (val > (1 << roi_shift))
+            return (quan_parameter < 0)?-(val >> roi_shift):(val >> roi_shift);
+    }
+    return quan_parameter;
+}
+
 static int decode_cblk(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
                        Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk,
                        int width, int height, int bandpos, uint8_t roi_shift, const int M_b)
@@ -2073,28 +2086,13 @@ static int decode_cblk(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *cod
         for (int x = 0; x < width; x++) {
             int n, v, val;
             n = y * t1->stride + x;
-            v = t1->data[n];
-            val = FFABS(v);
-            if (val > (1 << roi_shift))
-                t1->data[n] = (v < 0) ? -(val >> roi_shift) : (val >> roi_shift);
+            // ROI-shift
+            t1->data[n] = roi_shift_param(roi_shift, t1->data[n]);
             // Shift up for quantization
             t1->data[n] <<= 31 - M_b - 1;
         }
     }
     return 1;
-}
-
-static inline int roi_shift_param(Jpeg2000Component *comp,
-                                   int quan_parameter)
-{
-    uint8_t roi_shift;
-    int val;
-    roi_shift = comp->roi_shift;
-    val = (quan_parameter < 0)?-quan_parameter:quan_parameter;
-
-    if (val > (1 << roi_shift))
-        return (quan_parameter < 0)?-(val >> roi_shift):(val >> roi_shift);
-    return quan_parameter;
 }
 
 /* TODO: Verify dequantization for lossless case
@@ -2199,18 +2197,6 @@ static inline void mct_decode(const Jpeg2000DecoderContext *s, Jpeg2000Tile *til
     s->dsp.mct_decode[tile->codsty[0].transform](src[0], src[1], src[2], csize);
 }
 
-static inline void roi_scale_cblk(Jpeg2000Cblk *cblk,
-                                  Jpeg2000Component *comp,
-                                  Jpeg2000T1Context *t1)
-{
-    int i, j;
-    int w = cblk->coord[0][1] - cblk->coord[0][0];
-    for (j = 0; j < (cblk->coord[1][1] - cblk->coord[1][0]); ++j) {
-        int *src = t1->data + j*t1->stride;
-        for (i = 0; i < w; ++i)
-            src[i] = roi_shift_param(comp, src[i]);
-    }
-}
 
 static inline int tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile *tile)
 {
@@ -2282,8 +2268,6 @@ static inline int tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile 
                         x = cblk->coord[0][0] - band->coord[0][0];
                         y = cblk->coord[1][0] - band->coord[1][0];
 
-                        // if (comp->roi_shift)
-                        //     roi_scale_cblk(cblk, comp, &t1);
                         if (codsty->transform == FF_DWT97)
                             dequantization_float(x, y, cblk, comp, &t1, band, M_b);
                         else if (codsty->transform == FF_DWT97_INT)
