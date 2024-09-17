@@ -30,23 +30,6 @@
 #include "libavutil/mem.h"
 #include "jpeg2000dwt.h"
 
-/* Defines for 9/7 DWT lifting parameters.
- * Parameters are in float. */
-#define F_LFTG_ALPHA  1.586134342059924f
-#define F_LFTG_BETA   0.052980118572961f
-#define F_LFTG_GAMMA  0.882911075530934f
-#define F_LFTG_DELTA  0.443506852043971f
-
-/* Lifting parameters in integer format.
- * Computed as param = (float param) * (1 << 16) */
-#define I_LFTG_ALPHA_PRIME   38413ll // = 103949 - 65536, (= alpha - 1.0)
-#define I_LFTG_BETA           3472ll
-#define I_LFTG_GAMMA         57862ll
-#define I_LFTG_DELTA         29066ll
-#define I_LFTG_K             80621ll
-#define I_LFTG_X             53274ll
-#define I_PRESHIFT 8
-
 static inline void extend53(int *p, int i0, int i1)
 {
     p[i0 - 1] = p[i0 + 1];
@@ -492,8 +475,8 @@ static void dwt_decode97_int(DWTContext *s, int32_t *t)
     /* position at index O of line range [0-5,w+5] cf. extend function */
     line += 5;
 
-    for (i = 0; i < w * h; i++)
-        data[i] *= 1LL << I_PRESHIFT;
+    // for (i = 0; i < w * h; i++)
+    //     data[i] *= 1LL << I_PRESHIFT;
 
     for (lev = 0; lev < s->ndeclevels; lev++) {
         int lh = s->linelen[lev][0],
@@ -536,8 +519,8 @@ static void dwt_decode97_int(DWTContext *s, int32_t *t)
     }
 
     for (i = 0; i < w * h; i++)
-        // We shift down by `I_PRESHIFT + 1` because the input coefficients `datap[]` were shifted down to 1 bit above from the binary point.
-        data[i] = (int32_t)(data[i] + ((1LL<<(I_PRESHIFT + 1))>>1)) >> (I_PRESHIFT + 1);
+        // We shift down by `I_PRESHIFT` because the input coefficients `datap[]` were shifted up by `I_PRESHIFT` to secure the precision
+        data[i] = (int32_t)(data[i] + ((1LL<<(I_PRESHIFT))>>1)) >> (I_PRESHIFT);
 }
 
 int ff_jpeg2000_dwt_init(DWTContext *s, int border[2][2],

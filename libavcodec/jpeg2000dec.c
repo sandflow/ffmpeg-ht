@@ -1991,7 +1991,7 @@ static void decode_clnpass(const Jpeg2000DecoderContext *s, Jpeg2000T1Context *t
 
 static int decode_cblk(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
                        Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk,
-                       int width, int height, int bandpos, uint8_t roi_shift)
+                       int width, int height, int bandpos, uint8_t roi_shift, const int M_b)
 {
     int passno = cblk->npasses, pass_t = 2, bpno = cblk->nonzerobits - 1;
     int pass_cnt = 0;
@@ -2068,6 +2068,19 @@ static int decode_cblk(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *cod
         av_log(s->avctx, AV_LOG_WARNING, "Synthetic End of Stream Marker Read.\n");
     }
 
+    // Shifting up and ROI adjustment
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int n, v, val;
+            n = y * t1->stride + x;
+            v = t1->data[n];
+            val = FFABS(v);
+            if (val > (1 << roi_shift))
+                t1->data[n] = (v < 0) ? -(val >> roi_shift) : (val >> roi_shift);
+            // Shift up for quantization
+            t1->data[n] <<= 31 - M_b - 1;
+        }
+    }
     return 1;
 }
 
@@ -2093,50 +2106,68 @@ static inline int roi_shift_param(Jpeg2000Component *comp,
 /* Float dequantization of a codeblock.*/
 static void dequantization_float(int x, int y, Jpeg2000Cblk *cblk,
                                  Jpeg2000Component *comp,
-                                 Jpeg2000T1Context *t1, Jpeg2000Band *band)
+                                 Jpeg2000T1Context *t1, Jpeg2000Band *band, const int M_b)
 {
     int i, j;
+    const int downshift = 31 - M_b - 1;
     int w = cblk->coord[0][1] - cblk->coord[0][0];
     for (j = 0; j < (cblk->coord[1][1] - cblk->coord[1][0]); ++j) {
         float *datap = &comp->f_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
         for (i = 0; i < w; ++i)
-            datap[i] = src[i] * band->f_stepsize;
+            datap[i] = (src[i] >> downshift) * band->f_stepsize;
     }
 }
 
 /* Integer dequantization of a codeblock.*/
 static void dequantization_int(int x, int y, Jpeg2000Cblk *cblk,
                                Jpeg2000Component *comp,
-                               Jpeg2000T1Context *t1, Jpeg2000Band *band)
+                               Jpeg2000T1Context *t1, Jpeg2000Band *band, const int M_b)
 {
     int i, j;
+    const int downshift = 31 - M_b - 1;
     int w = cblk->coord[0][1] - cblk->coord[0][0];
     for (j = 0; j < (cblk->coord[1][1] - cblk->coord[1][0]); ++j) {
         int32_t *datap = &comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
         if (band->i_stepsize == 32768) {
             for (i = 0; i < w; ++i)
-                datap[i] = src[i] / 2;
+                datap[i] = (src[i] >> downshift) / 2;
         } else {
             // This should be VERY uncommon
             for (i = 0; i < w; ++i)
-                datap[i] = (src[i] * (int64_t)band->i_stepsize) / 65536;
+                datap[i] = ((src[i] >> downshift) * (int64_t)band->i_stepsize) / 65536;
         }
     }
 }
 
 static void dequantization_int_97(int x, int y, Jpeg2000Cblk *cblk,
                                Jpeg2000Component *comp,
-                               Jpeg2000T1Context *t1, Jpeg2000Band *band)
+                               Jpeg2000T1Context *t1, Jpeg2000Band *band, const int M_b)
 {
     int i, j;
     int w = cblk->coord[0][1] - cblk->coord[0][0];
+    float fscale = band->f_stepsize;
+    const int downshift = 31 - M_b - 1;
+    const int PRESCALE = 6; // At least 6 is required to pass the conformance tests in ISO/IEC 15444-4
+    int scale;
+
+    fscale /= (float)(1 << downshift);
+    fscale *= (float)(1 << PRESCALE) * (float)(1 << (16 + I_PRESHIFT));
+    scale = (int)(fscale + 0.5);
+    band->i_stepsize = scale;
     for (j = 0; j < (cblk->coord[1][1] - cblk->coord[1][0]); ++j) {
         int32_t *datap = &comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
-        for (i = 0; i < w; ++i)
-            datap[i] = (int32_t)(src[i] * (int64_t)band->i_stepsize + (1 << 14)) >> 15;
+        for (i = 0; i < w; ++i) {
+            int sign = src[i] & INT32_MIN;
+            int val = FFABS(src[i]);
+            // Shifting down to prevent overflow in inverse DWT97
+            val = (val + (1 << (PRESCALE - 1))) >> PRESCALE;
+            datap[i] = (int32_t)((val * (int64_t)band->i_stepsize + (1 << 15)) >> 16);
+            if (sign)
+                datap[i] = -(datap[i] & INT32_MAX);
+        }
     }
 }
 
@@ -2242,7 +2273,7 @@ static inline int tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile 
                             ret = decode_cblk(s, codsty, &t1, cblk,
                                               cblk->coord[0][1] - cblk->coord[0][0],
                                               cblk->coord[1][1] - cblk->coord[1][0],
-                                              bandpos, comp->roi_shift);
+                                              bandpos, comp->roi_shift, M_b);
 
                         if (ret)
                             coded = 1;
@@ -2251,14 +2282,14 @@ static inline int tile_codeblocks(const Jpeg2000DecoderContext *s, Jpeg2000Tile 
                         x = cblk->coord[0][0] - band->coord[0][0];
                         y = cblk->coord[1][0] - band->coord[1][0];
 
-                        if (comp->roi_shift)
-                            roi_scale_cblk(cblk, comp, &t1);
+                        // if (comp->roi_shift)
+                        //     roi_scale_cblk(cblk, comp, &t1);
                         if (codsty->transform == FF_DWT97)
-                            dequantization_float(x, y, cblk, comp, &t1, band);
+                            dequantization_float(x, y, cblk, comp, &t1, band, M_b);
                         else if (codsty->transform == FF_DWT97_INT)
-                            dequantization_int_97(x, y, cblk, comp, &t1, band);
+                            dequantization_int_97(x, y, cblk, comp, &t1, band, M_b);
                         else
-                            dequantization_int(x, y, cblk, comp, &t1, band);
+                            dequantization_int(x, y, cblk, comp, &t1, band, M_b);
                    } /* end cblk */
                 } /*end prec */
             } /* end band */

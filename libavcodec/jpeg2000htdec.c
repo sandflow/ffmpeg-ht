@@ -1332,7 +1332,7 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
             if (sign)
                 val = -val;
             /* Shift down to 1 bit upper from decimal point for reconstruction value (= 0.5) */
-            val >>= (pLSB - 1);
+            // val >>= (pLSB - 1);
             t1->data[n] = val;
         }
     }
