@@ -475,9 +475,6 @@ static void dwt_decode97_int(DWTContext *s, int32_t *t)
     /* position at index O of line range [0-5,w+5] cf. extend function */
     line += 5;
 
-    // for (i = 0; i < w * h; i++)
-    //     data[i] *= 1LL << I_PRESHIFT;
-
     for (lev = 0; lev < s->ndeclevels; lev++) {
         int lh = s->linelen[lev][0],
             lv = s->linelen[lev][1],

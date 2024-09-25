@@ -2111,7 +2111,7 @@ static void dequantization_float(int x, int y, Jpeg2000Cblk *cblk,
             int val = src[i];
             if (val < 0) // Convert sign-magnitude to two's complement
                 val = -(val & INT32_MAX);
-            datap[i] = val * fscale;
+            datap[i] = (float)val * fscale;
         }
     }
 }
@@ -2162,20 +2162,20 @@ static void dequantization_int_97(int x, int y, Jpeg2000Cblk *cblk,
     int scale;
 
     fscale /= (float)(1 << downshift);
-    fscale *= (float)(1 << PRESCALE) * (float)(1 << (16 + I_PRESHIFT));
+    fscale *= (float)(1 << PRESCALE);
+    fscale *= (float)(1 << (16 + I_PRESHIFT));
     scale = (int)(fscale + 0.5);
     band->i_stepsize = scale;
     for (j = 0; j < (cblk->coord[1][1] - cblk->coord[1][0]); ++j) {
         int32_t *datap = &comp->i_data[(comp->coord[0][1] - comp->coord[0][0]) * (y + j) + x];
         int *src = t1->data + j*t1->stride;
         for (i = 0; i < w; ++i) {
-            int sign = src[i] & INT32_MIN;
-            int val = src[i] & INT32_MAX;
-            // Shifting down to prevent overflow in inverse DWT97
+            int val = src[i];
+            if (val < 0) // Convert sign-magnitude to two's complement
+                val = -(val & INT32_MAX);
+            // Shifting down to prevent overflow in dequantization
             val = (val + (1 << (PRESCALE - 1))) >> PRESCALE;
-            datap[i] = (int32_t)((val * (int64_t)band->i_stepsize + (1 << 15)) >> 16);
-            if (sign)  // Convert sign-magnitude to two's complement
-                datap[i] = -(datap[i] & INT32_MAX);
+            datap[i] = RSHIFT(val * (int64_t)band->i_stepsize, 16);
         }
     }
 }
