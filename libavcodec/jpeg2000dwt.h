@@ -33,6 +33,23 @@
 #define F_LFTG_K      1.230174104914001f
 #define F_LFTG_X      0.812893066115961f
 
+/* Defines for 9/7 DWT lifting parameters.
+ * Parameters are in float. */
+#define F_LFTG_ALPHA  1.586134342059924f
+#define F_LFTG_BETA   0.052980118572961f
+#define F_LFTG_GAMMA  0.882911075530934f
+#define F_LFTG_DELTA  0.443506852043971f
+
+/* Lifting parameters in integer format.
+ * Computed as param = (float param) * (1 << 16) */
+#define I_LFTG_ALPHA_PRIME   38413ll // = 103949 - 65536, (= alpha - 1.0)
+#define I_LFTG_BETA           3472ll
+#define I_LFTG_GAMMA         57862ll
+#define I_LFTG_DELTA         29066ll
+#define I_LFTG_K             80621ll
+#define I_LFTG_X             53274ll
+#define I_PRESHIFT 8
+
 enum DWTType {
     FF_DWT97,
     FF_DWT53,
