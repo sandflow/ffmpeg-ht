@@ -1,4 +1,4 @@
-3b20090f3d1f8804789c0dfdc68049fb *tests/data/fate/vsynth2-jpeg2000-gbrp12.avi
-8484786 tests/data/fate/vsynth2-jpeg2000-gbrp12.avi
-44c4232da8e05ce034558ee1c5899e0a *tests/data/fate/vsynth2-jpeg2000-gbrp12.out.rawvideo
-stddev:    1.23 PSNR: 46.30 MAXDIFF:   14 bytes:  7603200/  7603200
+3e8eb1cfe12b4dedca6d5f696bb10a9a *tests/data/fate/vsynth2-jpeg2000-gbrp12.avi
+10554800 tests/data/fate/vsynth2-jpeg2000-gbrp12.avi
+6df1c173bcec7b7af37ce6dc21e97040 *tests/data/fate/vsynth2-jpeg2000-gbrp12.out.rawvideo
+stddev:    1.19 PSNR: 46.56 MAXDIFF:   13 bytes:  7603200/  7603200
