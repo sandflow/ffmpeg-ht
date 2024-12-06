@@ -236,7 +236,7 @@ static int do_psnr(FFFrameSync *fs)
 
     if (s->stats_file) {
         if (s->stats_version >= 2 && !s->stats_header_written) {
-            fprintf(s->stats_file, "psnr_log_version:2 fields:n");
+            fprintf(s->stats_file, "psnr_log_version:3 fields:n");
             fprintf(s->stats_file, ",mse_avg");
             for (int j = 0; j < s->nb_components; j++) {
                 fprintf(s->stats_file, ",mse_%c", s->comps[j]);
