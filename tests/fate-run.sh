@@ -72,6 +72,38 @@ do_tiny_psnr(){
     fi
 }
 
+# $1 is the reference image
+# $2 is the test image
+# $3 is the maximum MSE allowed across components
+# $4 is the maximum peak error allowed across components
+mse_peak_error(){
+    stats=$(run ffmpeg${PROGSUF}${EXECSUF} -i "$1" -i "$2" -filter_complex "psnr=stats_version=3:output_max=1:f=-" -f null - -hide_banner -loglevel error)
+    for item in y u v r g b a; do
+        mse=$(echo $stats | sed -nE "s/.*mse_$item:([0-9.]+).*/\1/p")
+        if [ -z "$mse" ]; then
+            continue
+        fi
+        mse_exceeded=$(echo "$mse > $3" | bc -l)
+        if [ "$mse_exceeded" != 0 ]; then
+            echo "MSE value $mse exceeded the specified maximum $3"
+            echo $stats
+            return 1
+        fi
+        peak=$(echo $stats | sed -nE "s/.*peak_$item:([0-9.]+).*/\1/p")
+        if [ -z "$peak" ]; then
+            echo "peak_$item value missing when mse_$item was present"
+        fi
+        peak_exceeded=$(echo "$peak > $4" | bc -l)
+        if [ "$peak_exceeded" != 0 ]; then
+            echo "Peak value $peak exceeded the specified maximum $4"
+            echo $stats
+            return 1
+        fi
+    done
+    echo "Passed"
+    return 0
+}
+
 oneoff(){
     do_tiny_psnr "$1" "$2" MAXDIFF
 }
