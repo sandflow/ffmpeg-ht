@@ -235,7 +235,7 @@ static int do_psnr(FFFrameSync *fs)
     set_meta(metadata, "lavfi.psnr.psnr_avg", 0, get_psnr(mse, 1, s->average_max));
 
     if (s->stats_file) {
-        if ((s->stats_version == 2 || s->stats_version == 3) && !s->stats_header_written) {
+        if (s->stats_version >= 2 && !s->stats_header_written) {
             fprintf(s->stats_file, "psnr_log_version:2 fields:n");
             fprintf(s->stats_file, ",mse_avg");
             for (int j = 0; j < s->nb_components; j++) {
@@ -270,7 +270,7 @@ static int do_psnr(FFFrameSync *fs)
             fprintf(s->stats_file, "psnr_%c:%0.2f ", s->comps[j],
                     get_psnr(comp_mse[c], 1, s->max[c]));
         }
-        if ((s->stats_version == 2 || s->stats_version == 3) && s->stats_add_max) {
+        if (s->stats_version >= 2 && s->stats_add_max) {
             fprintf(s->stats_file, "max_avg:%d ", s->average_max);
             for (int j = 0; j < s->nb_components; j++) {
                 int c = s->is_rgb ? s->rgba_map[j] : j;
