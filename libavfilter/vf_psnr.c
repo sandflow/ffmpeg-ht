@@ -36,6 +36,11 @@
 #include "framesync.h"
 #include "psnr.h"
 
+typedef struct Score {
+    uint64_t mse;
+    uint64_t peak;
+} Score;
+
 typedef struct PSNRContext {
     const AVClass *class;
     FFFrameSync fs;
@@ -47,7 +52,9 @@ typedef struct PSNRContext {
     int stats_header_written;
     int stats_add_max;
     int max[4], average_max;
+    int peak[4];
     int is_rgb;
+    int bpp;
     uint8_t rgba_map[4];
     char comps[4];
     int nb_components;
@@ -55,7 +62,7 @@ typedef struct PSNRContext {
     int planewidth[4];
     int planeheight[4];
     double planeweight[4];
-    uint64_t **score;
+    Score **score;
     PSNRDSPContext dsp;
 } PSNRContext;
 
@@ -65,7 +72,7 @@ typedef struct PSNRContext {
 static const AVOption psnr_options[] = {
     {"stats_file", "Set file where to store per-frame difference information", OFFSET(stats_file_str), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS },
     {"f",          "Set file where to store per-frame difference information", OFFSET(stats_file_str), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 0, FLAGS },
-    {"stats_version", "Set the format version for the stats file.",               OFFSET(stats_version),  AV_OPT_TYPE_INT,    {.i64=1},    1, 2, FLAGS },
+    {"stats_version", "Set the format version for the stats file.",               OFFSET(stats_version),  AV_OPT_TYPE_INT,    {.i64=1},    1, 3, FLAGS },
     {"output_max",  "Add raw stats (max values) to the output log.",            OFFSET(stats_add_max), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
     { NULL }
 };
@@ -89,17 +96,18 @@ typedef struct ThreadData {
     int ref_linesize[4];
     int planewidth[4];
     int planeheight[4];
-    uint64_t **score;
+    int bpp;
+    Score **score;
     int nb_components;
     PSNRDSPContext *dsp;
 } ThreadData;
 
 static
-int compute_images_mse(AVFilterContext *ctx, void *arg,
+int compute_images_stats(AVFilterContext *ctx, void *arg,
                        int jobnr, int nb_jobs)
 {
     ThreadData *td = arg;
-    uint64_t *score = td->score[jobnr];
+    Score *score = td->score[jobnr];
 
     for (int c = 0; c < td->nb_components; c++) {
         const int outw = td->planewidth[c];
@@ -111,12 +119,31 @@ int compute_images_mse(AVFilterContext *ctx, void *arg,
         const uint8_t *main_line = td->main_data[c] + main_linesize * slice_start;
         const uint8_t *ref_line = td->ref_data[c] + ref_linesize * slice_start;
         uint64_t m = 0;
+        uint64_t p = 0;
         for (int i = slice_start; i < slice_end; i++) {
             m += td->dsp->sse_line(main_line, ref_line, outw);
+            if (td->bpp > 8) {
+                uint16_t *mp = (uint16_t*) main_line;
+                uint16_t *rp = (uint16_t*) ref_line;
+                for (int j = 0; j < outw; j++) {
+                    int diff = abs(*mp++ - *rp++);
+                    if(diff > p)
+                        p = diff;
+                }
+            } else {
+                uint8_t *mp = main_line;
+                uint8_t *rp = ref_line;
+                for (int j = 0; j < outw; j++) {
+                    int diff = abs(*mp++ - *rp++);
+                    if(diff > p)
+                        p = diff;
+                }
+            }
             ref_line += ref_linesize;
             main_line += main_linesize;
         }
-        score[c] = m;
+        score[c].mse = m;
+        score[c].peak = p;
     }
 
     return 0;
@@ -163,6 +190,7 @@ static int do_psnr(FFFrameSync *fs)
         td.ref_linesize[c] = ref->linesize[c];
         td.planewidth[c] = s->planewidth[c];
         td.planeheight[c] = s->planeheight[c];
+        td.bpp = s->bpp;
     }
 
     if (master->color_range != ref->color_range) {
@@ -172,12 +200,15 @@ static int do_psnr(FFFrameSync *fs)
                av_color_range_name(ref->color_range));
     }
 
-    ff_filter_execute(ctx, compute_images_mse, &td, NULL,
+    ff_filter_execute(ctx, compute_images_stats, &td, NULL,
                       FFMIN(s->planeheight[1], s->nb_threads));
 
     for (int j = 0; j < s->nb_threads; j++) {
-        for (int c = 0; c < s->nb_components; c++)
-            comp_sum[c] += s->score[j][c];
+        for (int c = 0; c < s->nb_components; c++) {
+            comp_sum[c] += s->score[j][c].mse;
+            if (s->score[j][c].peak > s->peak[c])
+                s->peak[c] = s->score[j][c].peak;
+        }
     }
 
     for (int c = 0; c < s->nb_components; c++)
@@ -204,7 +235,7 @@ static int do_psnr(FFFrameSync *fs)
     set_meta(metadata, "lavfi.psnr.psnr_avg", 0, get_psnr(mse, 1, s->average_max));
 
     if (s->stats_file) {
-        if (s->stats_version == 2 && !s->stats_header_written) {
+        if ((s->stats_version == 2 || s->stats_version == 3) && !s->stats_header_written) {
             fprintf(s->stats_file, "psnr_log_version:2 fields:n");
             fprintf(s->stats_file, ",mse_avg");
             for (int j = 0; j < s->nb_components; j++) {
@@ -218,6 +249,11 @@ static int do_psnr(FFFrameSync *fs)
                 fprintf(s->stats_file, ",max_avg");
                 for (int j = 0; j < s->nb_components; j++) {
                     fprintf(s->stats_file, ",max_%c", s->comps[j]);
+                }
+                if (s->stats_version == 3) {
+                    for (int j = 0; j < s->nb_components; j++) {
+                        fprintf(s->stats_file, ",peak_%c", s->comps[j]);
+                    }
                 }
             }
             fprintf(s->stats_file, "\n");
@@ -234,11 +270,17 @@ static int do_psnr(FFFrameSync *fs)
             fprintf(s->stats_file, "psnr_%c:%0.2f ", s->comps[j],
                     get_psnr(comp_mse[c], 1, s->max[c]));
         }
-        if (s->stats_version == 2 && s->stats_add_max) {
+        if ((s->stats_version == 2 || s->stats_version == 3) && s->stats_add_max) {
             fprintf(s->stats_file, "max_avg:%d ", s->average_max);
             for (int j = 0; j < s->nb_components; j++) {
                 int c = s->is_rgb ? s->rgba_map[j] : j;
                 fprintf(s->stats_file, "max_%c:%d ", s->comps[j], s->max[c]);
+            }
+            if (s->stats_version == 3) {
+                for (int j = 0; j < s->nb_components; j++) {
+                    int c = s->is_rgb ? s->rgba_map[j] : j;
+                    fprintf(s->stats_file, "peak_%c:%d ", s->comps[j], s->peak[c]);
+                }
             }
         }
         fprintf(s->stats_file, "\n");
@@ -314,6 +356,9 @@ static int config_input_ref(AVFilterLink *inlink)
     s->max[2] = (1 << desc->comp[2].depth) - 1;
     s->max[3] = (1 << desc->comp[3].depth) - 1;
 
+    for (j = 0; j < s->nb_components; j++)
+        s->peak[j] = 0;
+
     s->is_rgb = ff_fill_rgba_map(s->rgba_map, inlink->format) >= 0;
     s->comps[0] = s->is_rgb ? 'r' : 'y' ;
     s->comps[1] = s->is_rgb ? 'g' : 'u' ;
@@ -334,6 +379,7 @@ static int config_input_ref(AVFilterLink *inlink)
     }
     s->average_max = lrint(average_max);
 
+    s->bpp = desc->comp[0].depth;
     ff_psnr_init(&s->dsp, desc->comp[0].depth);
 
     s->score = av_calloc(s->nb_threads, sizeof(*s->score));
