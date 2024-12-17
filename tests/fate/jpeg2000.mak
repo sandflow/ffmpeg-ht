@@ -69,6 +69,8 @@ fate-jpeg2000dec-p1_02: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpe
 FATE_JPEG2000DEC += fate-jpeg2000dec-p1_03
 fate-jpeg2000dec-p1_03: CMD = framecrc -flags +bitexact -i $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_03.j2k
 
+# The MSE and Peak Error values are 16x those found in ISO/IEC 15444-4: the latter assume 12-bit samples while FFMPEG decodes
+# to 16-bit samples
 FATE_JPEG2000DEC += fate-jpeg2000dec-p1_04
 fate-jpeg2000dec-p1_04: CMD = mse_peak_error $(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/p1_04.j2k \
 																							$(TARGET_SAMPLES)/jpeg2000/itu-iso/codestreams_profile1/c1p1_04-0.j2c \
