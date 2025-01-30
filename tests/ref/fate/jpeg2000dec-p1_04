@@ -1,0 +1,2 @@
+psnr_log_version:3 fields:n,mse_avg,mse_y,psnr_avg,psnr_y,max_avg,max_y,peak_y
+n:1 mse_avg:14434.96 mse_y:14434.96 psnr_avg:54.74 psnr_y:54.74 max_avg:65535 max_y:65535 peak_y:4048 
